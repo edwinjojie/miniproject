@@ -4,14 +4,15 @@ from datetime import datetime
 import cv2
 
 class EventDetector:
-    def __init__(self, temporal_window=10, min_holding=15, min_disposal=20, min_throw=5):
+    def __init__(self, temporal_window=10, min_holding=15, min_disposal=20, min_throw=5, depth_threshold=50):
         """Initialize the EventDetector with event detection parameters."""
-        self.events_data = []
+        self.events_data = []  # Moved here to reset per instance
         self.temporal_window = temporal_window
         self.min_holding = min_holding
         self.min_disposal = min_disposal
         self.min_throw = min_throw
-        self.max_depth = 1  # Placeholder, can be updated if depth data is available
+        self.depth_threshold = depth_threshold  # Max allowable depth difference
+        self.max_depth = 255  # Assuming normalized depth range 0-255 from MiDaS
 
     def process(self, tracking_data, detections, frame):
         """Process tracking data to detect disposal events."""
@@ -41,16 +42,22 @@ class EventDetector:
             })
 
     def _check_trash_proximity(self, track, detections):
-        """Check if trash is near the vehicle."""
+        """Check if trash is near the vehicle in 3D space."""
         nearest_trash = None
         min_distance = float('inf')
+        vehicle_z = track["center"][-1][2]
+        
         for det in detections:
             if det["class_id"] == 1:  # Trash
                 distance = self._calc_distance(track["center"][-1], det["center"])
-                if distance < min_distance:
-                    min_distance = distance
-                    nearest_trash = det
-        trash_near = min_distance < 150  # Simplified 2D proximity check
+                trash_z = det["center"][2]
+                depth_diff = abs(vehicle_z - trash_z)
+                if distance < 150 and depth_diff < self.depth_threshold:
+                    if distance < min_distance:
+                        min_distance = distance
+                        nearest_trash = det
+        
+        trash_near = nearest_trash is not None
         return trash_near, nearest_trash
 
     def _get_dynamic_thresholds(self, avg_area):
@@ -100,7 +107,7 @@ class EventDetector:
         return np.dot(movement, direction) > 0
 
     def _calc_distance(self, p1, p2):
-        """Calculate Euclidean distance between two points."""
+        """Calculate 3D Euclidean distance between two points."""
         return np.sqrt(sum((a - b) ** 2 for a, b in zip(p1, p2)))
 
     def _record_event(self, tid, track, event_type):
@@ -114,7 +121,5 @@ class EventDetector:
             "frames": list(track["frames"]),
             "state": track["state"]
         }
-        self.events_data.append(event)
-        track["no_trash_count"] = 0
-        track["proximity_buffer"].clear()
-        track["throw_buffer"].clear()
+        self.events_data.append(event)  # Append to instance-specific list
+        # No file logging here; handled by API
