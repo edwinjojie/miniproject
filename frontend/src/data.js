@@ -1,5 +1,6 @@
-// Default API_BASE_URL from .env or fallback to localhost
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+// API_BASE_URL is injected by Create React App from .env during build
+// Fallback to localhost if not defined (safe for browser runtime)
+const API_BASE_URL = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : 'http://localhost:5000';
 let socket;
 
 export const initializeWebSocket = (sid) => {
