@@ -5,7 +5,7 @@ import torchvision.transforms as T
 
 class DepthVisualizer:
     def __init__(self):
-        """Initialize the DepthVisualizer with MiDaS model."""
+        """Initialize the MiDaS model for depth estimation."""
         self.midas = torch.hub.load("intel-isl/MiDaS", "MiDaS_small", pretrained=True)
         self.midas.eval()
         self.midas.to('cpu')
@@ -16,7 +16,7 @@ class DepthVisualizer:
         ])
 
     def visualize_depth(self, frame):
-        """Generate and visualize the depth map of the frame."""
+        """Generate and visualize the depth map."""
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img_input = self.transform(img_rgb).unsqueeze(0).to('cpu')
         
@@ -26,14 +26,7 @@ class DepthVisualizer:
                 depth.unsqueeze(1), size=frame.shape[:2], mode="bicubic", align_corners=False
             ).squeeze().cpu().numpy()
         
+        # Normalize depth values to 0-255 for visualization
         depth_normalized = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
         depth_map = depth_normalized.astype(np.uint8)
-        depth_colored = cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
-        
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        for y in range(0, depth_map.shape[0], 100):
-            for x in range(0, depth_map.shape[1], 100):
-                depth_value = depth_map[y, x]
-                cv2.putText(depth_colored, f"{depth_value:.0f}", (x, y), font, 0.5, (255, 255, 255), 1)
-        
-        return depth_colored
+        return cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)

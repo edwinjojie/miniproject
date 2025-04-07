@@ -4,55 +4,64 @@ from detection import Detector
 from tracking import Tracker
 from events import EventDetector
 from reporting import Reporter
-from depth_visualization import DepthVisualizer
-import socketio  # Optional for web integration
-import base64
+from visualization_manager import VisualizationManager
 
-# Optional: Initialize SocketIO for web integration (comment out if not using)
-# sio = socketio.Client()
-
-def process_video(video_path, sid="default_sid"):
-    """Process video and handle outputs, with optional web emission."""
+def process_video(video_path):
+    """Process video with visualization mode toggling, including optical flow."""
     cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Could not open video {video_path}")
+        return None
+    
+    tracker.frame_rate = cap.get(cv2.CAP_PROP_FPS)
     frame_count = 0
     events_data = []
+
+    # Initialize the visualization manager with the existing detector
+    vis_manager = VisualizationManager(detector)
+    vis_manager.set_mode('normal')  # Start with normal visualization
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
         detections = detector.detect(frame)
         tracker.assign_ids(detections, frame_count)
-        flow = detector.compute_optical_flow(frame)
+        flow = detector.compute_optical_flow(frame)  # Compute optical flow for every frame
         event_detector.process(tracker.tracking_data, detections, frame, flow)
         events_data.extend(event_detector.events_data[-1:])
-        vis_frame = detector.visualize(frame, detections, tracker.tracking_data)
-        depth_frame = depth_visualizer.visualize_depth(frame)
-        
-        cv2.imshow("Waste Disposal Monitoring", vis_frame)
-        cv2.imshow("Depth Visualization", depth_frame)
-        
-        # Optional: Web emission (comment out if not using website)
-        # _, buffer = cv2.imencode('.jpg', vis_frame)
-        # sio.emit('frame_update', {'sid': sid, 'frame': base64.b64encode(buffer).decode('utf-8')}, room=sid)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+
+        # Visualize using the manager, passing flow for optical flow mode
+        vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, flow)
+
+        # Display the visualized frame
+        cv2.imshow("Visualization", vis_frame)
+
+        # Keyboard controls to toggle visualization modes
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
+        elif key == ord('n'):
+            vis_manager.set_mode('normal')
+            print("Switched to Normal Visualization")
+        elif key == ord('d'):
+            vis_manager.set_mode('depth')
+            print("Switched to Depth Visualization")
+        elif key == ord('o'):
+            vis_manager.set_mode('optical_flow')
+            print("Switched to Optical Flow Visualization")
+
         frame_count += 1
-    
+
     cap.release()
     cv2.destroyAllWindows()
     report_path = reporter.export_events(events_data)
-    
-    # Optional: Web emission for report (comment out if not using website)
-    # with open(report_path, "rb") as f:
-    #     sio.emit('processing_complete', {'sid': sid, 'report': base64.b64encode(f.read()).decode('utf-8')}, room=sid)
-    
     return report_path
 
 def main():
     config = {
-        "vehicle_model_path": "/models/yolov8m.pt",
-        "trash_model_path": "./models/100epochv2.pt",
+        "vehicle_model_path": "models/yolov8m.pt",
+        "trash_model_path": "models/100epochv2.pt",
         "video_path": "videos/video2.mp4",
         "evidence_path": "evidence",
         "report_path": "reports",
@@ -68,7 +77,7 @@ def main():
     os.makedirs(config["evidence_path"], exist_ok=True)
     os.makedirs(config["report_path"], exist_ok=True)
     
-    global detector, tracker, event_detector, reporter, depth_visualizer
+    global detector, tracker, event_detector, reporter
     detector = Detector(config["vehicle_model_path"], config["trash_model_path"])
     tracker = Tracker(config["distance_threshold"], config["max_inactive_frames"])
     event_detector = EventDetector(
@@ -79,17 +88,13 @@ def main():
         depth_threshold=config["depth_threshold"]
     )
     reporter = Reporter(config["evidence_path"], config["report_path"], config["camera_location"])
-    depth_visualizer = DepthVisualizer()
     
-    # Standalone mode: Process video directly
     video_path = config["video_path"]
     report_path = process_video(video_path)
-    print(f"Report generated at: {report_path}")
-    
-    # Optional: Web mode (uncomment and configure if using website)
-    # sio.connect('http://localhost:3000')
-    # sio.on('upload', lambda data: process_video(data['video_path'], data['sid']))
-    # sio.wait()
+    if report_path:
+        print(f"Report generated at: {report_path}")
+    else:
+        print("Video processing failed.")
 
 if __name__ == "__main__":
     main()
