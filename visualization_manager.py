@@ -8,6 +8,10 @@ class VisualizationManager:
         self.detector = detector
         self.current_mode = 'normal'  # Default to existing visualization
         self.depth_visualizer = DepthVisualizer()  # For depth visualization
+        # Added font definitions for new overlays
+        self.font = cv2.FONT_HERSHEY_SIMPLEX
+        self.font_size = 0.5
+        self.font_thickness = 1
 
     def set_mode(self, mode):
         """Set the current visualization mode."""
@@ -16,11 +20,23 @@ class VisualizationManager:
         else:
             raise ValueError("Invalid visualization mode")
 
-    def visualize(self, frame, detections, tracking_data, flow=None):
-        """Render the frame based on the current mode."""
+    def visualize(self, frame, detections, tracking_data, flow=None, potential_areas=None, low_conf_detections=None):
+        """Render the frame based on the current mode with optional overlays."""
         if self.current_mode == 'normal':
-            # Use the existing visualize method from Detector unchanged
-            return self.detector.visualize(frame, detections, tracking_data)
+            vis_frame = self.detector.visualize(frame, detections, tracking_data)
+            # Appended overlay for potential disposal areas
+            if potential_areas:
+                for area in potential_areas:
+                    cv2.rectangle(vis_frame, area['top_left'], area['bottom_right'], (0, 255, 255), 2)
+                    cv2.putText(vis_frame, "Potential Disposal", (area['top_left'][0], area['top_left'][1] - 10),
+                                self.font, self.font_size, (0, 255, 255), self.font_thickness)
+            # Appended overlay for low-confidence trash detections
+            if low_conf_detections:
+                for det in low_conf_detections:
+                    x1, y1, x2, y2 = map(int, det['bbox'])
+                    cv2.rectangle(vis_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                    cv2.putText(vis_frame, "Potential Trash", (x1, y1 - 10), self.font, self.font_size, (0, 255, 255), self.font_thickness)
+            return vis_frame
         elif self.current_mode == 'depth':
             return self.depth_visualizer.visualize_depth(frame)
         elif self.current_mode == 'optical_flow':

@@ -5,6 +5,7 @@ from collections import defaultdict
 from ultralytics import YOLO
 import torchvision.transforms as T
 from collections import deque
+
 class Detector:
     def __init__(self, vehicle_model_path, trash_model_path):
         """Initialize the Detector with vehicle and trash YOLO models and MiDaS."""
@@ -49,13 +50,14 @@ class Detector:
         # Normalize depth to 0-255
         depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
         
-        # Detect vehicles
+        # Detect vehicles with expanded classes
         vehicle_results = self.vehicle_model(frame, conf=0.5, verbose=False)
         for result in vehicle_results:
             for box in result.boxes:
                 bbox = box.xyxy[0].cpu().numpy()
                 class_id = int(box.cls[0].cpu().numpy())
-                if class_id in [2, 7]:  # 2: car, 7: truck
+                # Updated to include more vehicle classes
+                if class_id in [2, 3, 4, 6, 8]:  # bicycle, car, motorcycle, bus, truck
                     x, y = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
                     z = depth[int(y), int(x)]
                     center = (x, y, z)
@@ -63,9 +65,11 @@ class Detector:
                         'bbox': bbox,
                         'class_id': class_id,
                         'type': 'vehicle',
-                        'center': center
+                        'center': center,
+                        'confidence': box.conf[0].cpu().numpy()  # Added confidence
                     })
-        # Detect trash with lower confidence for small/occluded objects
+        
+        # Detect trash with lower confidence threshold
         trash_results = self.trash_model(frame, conf=0.3, verbose=False)
         for result in trash_results:
             for box in result.boxes:
@@ -81,7 +85,8 @@ class Detector:
                         'type': 'trash',
                         'center': center,
                         'depth_history': deque(maxlen=10),
-                        'trajectory': deque(maxlen=10)  # For throwing motion
+                        'trajectory': deque(maxlen=10),
+                        'confidence': box.conf[0].cpu().numpy()  # Added confidence
                     })
         return detections
 

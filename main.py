@@ -5,6 +5,35 @@ from tracking import Tracker
 from events import EventDetector
 from reporting import Reporter
 from visualization_manager import VisualizationManager
+import numpy as np
+
+def compute_potential_areas(flow, tracking_data):
+    """Identify potential disposal areas based on optical flow near vehicles."""
+    # Check if flow is None
+    if flow is None:
+        return []  # Return an empty list if no flow data is available
+    
+    potential_areas = []
+    for tid, track in tracking_data.items():
+        if track['type'] == 'vehicle':
+            x1, y1, x2, y2 = map(int, track['bbox'])
+            # Expand ROI by 50%
+            w, h = x2 - x1, y2 - y1
+            roi_x1 = max(0, x1 - w // 4)
+            roi_y1 = max(0, y1 - h // 4)
+            roi_x2 = min(flow.shape[1], x2 + w // 4)
+            roi_y2 = min(flow.shape[0], y2 + h // 4)
+            # Extract flow in ROI
+            roi_flow = flow[roi_y1:roi_y2, roi_x1:roi_x2]
+            # Compute magnitude
+            mag, _ = cv2.cartToPolar(roi_flow[..., 0], roi_flow[..., 1])
+            avg_mag = np.mean(mag)
+            if avg_mag > 5:  # Threshold for potential disposal
+                potential_areas.append({
+                    'top_left': (roi_x1, roi_y1),
+                    'bottom_right': (roi_x2, roi_y2)
+                })
+    return potential_areas
 
 def process_video(video_path):
     """Process video with visualization mode toggling, including optical flow."""
@@ -31,8 +60,12 @@ def process_video(video_path):
         event_detector.process(tracker.tracking_data, detections, frame, flow)
         events_data.extend(event_detector.events_data[-1:])
 
-        # Visualize using the manager, passing flow for optical flow mode
-        vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, flow)
+        # Added computation for potential areas and low-confidence detections
+        potential_areas = compute_potential_areas(flow, tracker.tracking_data)
+        low_conf_detections = [det for det in detections if det['type'] == 'trash' and det['confidence'] < 0.5]
+
+        # Updated visualize call to pass new parameters
+        vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, flow, potential_areas, low_conf_detections)
 
         # Display the visualized frame
         cv2.imshow("Visualization", vis_frame)
@@ -62,7 +95,7 @@ def main():
     config = {
         "vehicle_model_path": "models/yolov8m.pt",
         "trash_model_path": "models/100epochv2.pt",
-        "video_path": "videos/video2.mp4",
+        "video_path": "videos/ODOT camera films litterbug dumping trash on highway in Cleveland.mp4",
         "evidence_path": "evidence",
         "report_path": "reports",
         "distance_threshold": 150,
