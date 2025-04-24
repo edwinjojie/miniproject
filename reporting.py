@@ -1,64 +1,76 @@
 import os
 import cv2
-from PIL import Image
-from openpyxl import Workbook
-from openpyxl.drawing.image import Image as ExcelImage
+import shutil
 from datetime import datetime
-import io
+import csv
+from pathlib import Path
+import config  # Import config to access global variables
 
 class Reporter:
-    def __init__(self, evidence_path, report_path, location):
-        """Initialize the Reporter with paths and location."""
-        self.evidence_base = evidence_path
-        self.report_base = report_path
-        self.location = location
-        self.evidence = []
+    def __init__(self, evidence_path, report_path):
+        """Initialize with paths for evidence and reports."""
+        self.evidence_path = Path(evidence_path)
+        self.report_path = Path(report_path)
+        self.evidence_path.mkdir(parents=True, exist_ok=True)
+        self.report_path.mkdir(parents=True, exist_ok=True)
 
-    def save_evidence(self, event):
-        """Save event frames as evidence."""
-        folder = f"vehicle_{event['vehicle_id']}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
-        path = os.path.join(self.evidence_base, folder)
-        os.makedirs(path, exist_ok=True)
-        for i, frame in enumerate(event["frames"]):
-            cv2.imwrite(os.path.join(path, f"frame_{i:03d}.jpg"), frame)
-        self.evidence.append({
-            "path": path,
-            "timestamp": event["timestamp"],
-            "vehicle_id": event["vehicle_id"],
-            "type": event["event_type"]
-        })
+    def save_evidence(self, event, frame, frame_count):
+        """Save video clip as evidence based on current frame and count."""
+        timestamp_str = event['timestamp'].strftime('%Y%m%d_%H%M%S')
+        folder = self.evidence_path / f"event_{timestamp_str}_{event['vehicle_id']}"
+        folder.mkdir(parents=True, exist_ok=True)
+        video_path = config.video_path  # Access video_path from config
+        if not video_path:
+            print("Error: video_path not set in config")
+            return None
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            print(f"Error: Could not open video {video_path} for evidence")
+            return None
+        
+        # Position to 5 seconds before the event
+        start_frame = max(0, frame_count - 100)  # 5s at 20 FPS
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(str(folder / 'clip.mp4'), fourcc, 20.0, (frame.shape[1], frame.shape[0]))
+        for _ in range(200):  # 10 seconds total (5s before + 5s after)
+            ret, f = cap.read()
+            if ret:
+                out.write(f)
+        out.release()
+        cap.release()
+        evidence_path = str(folder / 'clip.mp4')
+        shutil.copy(video_path, folder / 'source_video.mp4')  # Backup source
+        return evidence_path
 
-    def export_events(self, events_data):
-        """Export events to an Excel report with embedded images."""
+    def export_events(self, events_data, camera_id, frame, frame_count):
+        """Export events to a CSV report with evidence links."""
         if not events_data:
             return None
-        wb = Workbook()
-        ws = wb.active
-        headers = ["Timestamp", "Vehicle ID", "Type", "Location", "Frames"]
-        ws.append(headers)
-        for ev in events_data:
-            self.save_evidence(ev)
-            evidence_entry = self.evidence[-1]
-            img_paths = [os.path.join(evidence_entry["path"], f) for f in os.listdir(evidence_entry["path"]) if f.endswith(".jpg")]
-            img_cells = []
-            for img_path in img_paths[:2]:
-                img = Image.open(img_path)
-                img.thumbnail((400, 300))
-                bio = io.BytesIO()
-                img.save(bio, format="PNG")
-                excel_img = ExcelImage(bio)
-                img_cells.append(excel_img)
-            row = [
-                evidence_entry["timestamp"].strftime("%Y-%m-%d %H:%M:%S"),
-                evidence_entry["vehicle_id"],
-                evidence_entry["type"],
-                self.location,
-                len(img_paths)
-            ]
-            ws.append(row)
-            for i, img in enumerate(img_cells, start=5):
-                ws.column_dimensions[chr(64 + i)].width = 40
-                ws.add_image(img, f"{chr(64 + i)}{ws.max_row}")
-        report_path = os.path.join(self.report_base, f"report_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx")
-        wb.save(report_path)
-        return report_path
+        report_file = self.report_path / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{camera_id}.csv"
+        with open(report_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Timestamp', 'Camera ID', 'Vehicle ID', 'Event Type', 'Location', 'Velocity', 'Evidence'])
+            for event in events_data:
+                evidence_path = self.save_evidence(event, frame, frame_count)
+                if evidence_path:
+                    writer.writerow([
+                        event['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
+                        camera_id,
+                        event['vehicle_id'],
+                        event['event_type'],
+                        str(event['location']),
+                        event['velocity'],
+                        evidence_path
+                    ])
+                else:
+                    writer.writerow([
+                        event['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
+                        camera_id,
+                        event['vehicle_id'],
+                        event['event_type'],
+                        str(event['location']),
+                        event['velocity'],
+                        'Evidence generation failed'
+                    ])
+        return str(report_file)

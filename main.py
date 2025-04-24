@@ -1,133 +1,78 @@
 import cv2
-import os
+import sys
 from detection import Detector
 from tracking import Tracker
 from events import EventDetector
-from reporting import Reporter
 from visualization_manager import VisualizationManager
-import numpy as np
+from depth_visualization import DepthVisualizer
+from reporting import Reporter
+import config
 
-def compute_potential_areas(flow, tracking_data):
-    """Identify potential disposal areas based on optical flow near vehicles."""
-    # Check if flow is None
-    if flow is None:
-        return []  # Return an empty list if no flow data is available
-    
-    potential_areas = []
-    for tid, track in tracking_data.items():
-        if track['type'] == 'vehicle':
-            x1, y1, x2, y2 = map(int, track['bbox'])
-            # Expand ROI by 50%
-            w, h = x2 - x1, y2 - y1
-            roi_x1 = max(0, x1 - w // 4)
-            roi_y1 = max(0, y1 - h // 4)
-            roi_x2 = min(flow.shape[1], x2 + w // 4)
-            roi_y2 = min(flow.shape[0], y2 + h // 4)
-            # Extract flow in ROI
-            roi_flow = flow[roi_y1:roi_y2, roi_x1:roi_x2]
-            # Compute magnitude
-            mag, _ = cv2.cartToPolar(roi_flow[..., 0], roi_flow[..., 1])
-            avg_mag = np.mean(mag)
-            if avg_mag > 5:  # Threshold for potential disposal
-                potential_areas.append({
-                    'top_left': (roi_x1, roi_y1),
-                    'bottom_right': (roi_x2, roi_y2)
-                })
-    return potential_areas
-
-def process_video(video_path):
-    """Process video with visualization mode toggling, including optical flow."""
+def process_video(video_path, vehicle_model_path, trash_model_path, output_path):
+    """Process video to detect waste disposal events with larger resolution."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open video {video_path}")
-        return None
-    
-    tracker.frame_rate = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = 0
-    events_data = []
+        sys.exit(1)
 
-    # Initialize the visualization manager with the existing detector
-    vis_manager = VisualizationManager(detector)
-    vis_manager.set_mode('normal')  # Start with normal visualization
+    # Define the desired resolution for visualization (1280x720 for wider and taller display)
+    # Change these values to adjust the output resolution if needed
+    output_width, output_height = 1080, 720
+
+    detector = Detector(vehicle_model_path, trash_model_path)
+    tracker = Tracker()
+    event_detector = EventDetector()
+    vis_manager = VisualizationManager()
+    depth_visualizer = DepthVisualizer()
+    reporter = Reporter("evidence", "reports")
+    config.frame_count = 0
+
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, 30.0, (output_width, output_height))
+    events_data = []
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
+
+        # Resize the input frame to the desired resolution
+        frame = cv2.resize(frame, (output_width, output_height))
+        config.frame_count += 1
         detections = detector.detect(frame)
-        tracker.assign_ids(detections, frame_count)
-        flow = detector.compute_optical_flow(frame)  # Compute optical flow for every frame
-        event_detector.process(tracker.tracking_data, detections, frame, flow)
-        events_data.extend(event_detector.events_data[-1:])
+        tracking_data = tracker.assign_ids(detections)
+        flow, _ = detector.compute_optical_flow(frame)
+        mode = vis_manager.current_mode
+        depth_map = depth_visualizer.visualize_depth(frame) if mode == 'depth' else None
 
-        # Added computation for potential areas and low-confidence detections
-        potential_areas = compute_potential_areas(flow, tracker.tracking_data)
-        low_conf_detections = [det for det in detections if det['type'] == 'trash' and det['confidence'] < 0.5]
+        events = event_detector.process(tracking_data, detections, frame, flow, depth_map)
+        events_data.extend(events)
+        vis_frame = vis_manager.visualize(frame, detections, tracking_data, events, flow, depth_map)
 
-        # Updated visualize call to pass new parameters
-        vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, flow, potential_areas, low_conf_detections)
+        out.write(vis_frame)
+        cv2.imshow('Waste Detection', vis_frame)
 
-        # Display the visualized frame
-        cv2.imshow("Visualization", vis_frame)
-
-        # Keyboard controls to toggle visualization modes
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
         elif key == ord('n'):
             vis_manager.set_mode('normal')
-            print("Switched to Normal Visualization")
-        elif key == ord('d'):
-            vis_manager.set_mode('depth')
-            print("Switched to Depth Visualization")
         elif key == ord('o'):
             vis_manager.set_mode('optical_flow')
-            print("Switched to Optical Flow Visualization")
+        elif key == ord('d'):
+            vis_manager.set_mode('depth')
 
-        frame_count += 1
-
-    cap.release()
-    cv2.destroyAllWindows()
-    report_path = reporter.export_events(events_data)
-    return report_path
-
-def main():
-    config = {
-        "vehicle_model_path": "models/yolov8m.pt",
-        "trash_model_path": "models/100epochv2.pt",
-        "video_path": "videos/ODOT camera films litterbug dumping trash on highway in Cleveland.mp4",
-        "evidence_path": "evidence",
-        "report_path": "reports",
-        "distance_threshold": 150,
-        "max_inactive_frames": 30,
-        "temporal_window": 10,
-        "min_holding": 15,
-        "min_disposal": 20,
-        "min_throw": 5,
-        "depth_threshold": 50,
-        "camera_location": "Location1"
-    }
-    os.makedirs(config["evidence_path"], exist_ok=True)
-    os.makedirs(config["report_path"], exist_ok=True)
-    
-    global detector, tracker, event_detector, reporter
-    detector = Detector(config["vehicle_model_path"], config["trash_model_path"])
-    tracker = Tracker(config["distance_threshold"], config["max_inactive_frames"])
-    event_detector = EventDetector(
-        temporal_window=config["temporal_window"],
-        min_holding=config["min_holding"],
-        min_disposal=config["min_disposal"],
-        min_throw=config["min_throw"],
-        depth_threshold=config["depth_threshold"]
-    )
-    reporter = Reporter(config["evidence_path"], config["report_path"], config["camera_location"])
-    
-    video_path = config["video_path"]
-    report_path = process_video(video_path)
+    report_path = reporter.export_events(events_data, "Camera1", frame, config.frame_count)
     if report_path:
         print(f"Report generated at: {report_path}")
     else:
-        print("Video processing failed.")
+        print("Report generation failed.")
+    cap.release()
+    out.release()
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) != 4:
+        print("Usage: python main.py <video_path> <vehicle_model_path> <trash_model_path>")
+        sys.exit(1)
+    process_video(sys.argv[1], sys.argv[2], sys.argv[3], 'output.mp4')

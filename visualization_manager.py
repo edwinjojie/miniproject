@@ -1,54 +1,89 @@
 import cv2
 import numpy as np
-from depth_visualization import DepthVisualizer 
+import config
 
 class VisualizationManager:
-    def __init__(self, detector):
-        """Initialize with the existing Detector instance."""
-        self.detector = detector
-        self.current_mode = 'normal'  # Default to existing visualization
-        self.depth_visualizer = DepthVisualizer()  # For depth visualization
-        # Added font definitions for new overlays
+    def __init__(self):
+        """Initialize visualization parameters with larger and bolder fonts."""
         self.font = cv2.FONT_HERSHEY_SIMPLEX
-        self.font_size = 0.5
-        self.font_thickness = 1
+        self.font_size = 0.8  # Increased font size for better readability
+        self.id_font_size = 0.8  # Increased for ID labels
+        self.font_thickness = 2  # Increased thickness for bolder text
+        self.colors = {
+            'vehicle': (0, 128, 255),
+            'trash': (0, 255, 0),
+            'text': (255, 255, 255),
+            'flow': (255, 0, 0)
+        }
+        self.state_colors = {
+            'moving': (0, 128, 255),  # Orange
+            'slowing': (0, 255, 255),  # Yellow
+            'stopped': (255, 0, 0)    # Red
+        }
+        self.current_mode = 'normal'  # Modes: 'normal', 'optical_flow', 'depth'
+
+    def visualize(self, frame, detections, tracking_data, events, flow=None, depth_map=None):
+        """Visualize detections, tracks, and events based on the current mode."""
+        vis_frame = frame.copy()
+
+        if self.current_mode == 'normal':
+            # Draw all detections, even those without IDs
+            for d in detections:
+                x1, y1, x2, y2 = map(int, d['bbox'])
+                if d['type'] == 'trash':
+                    if d['context'] == 'proper':
+                        color = (255, 0, 0)  # Blue
+                        label = 'Proper Disposal'
+                    elif d['status'] == 'confirmed':
+                        color = (0, 255, 0)  # Green
+                        label = 'Confirmed Trash'
+                    else:
+                        color = (0, 165, 255)  # Orange
+                        label = 'Potential Trash'
+                    cv2.rectangle(vis_frame, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(vis_frame, label, (x1, y1 - 10), self.font, self.id_font_size, self.colors['text'], self.font_thickness)
+                elif d['type'] == 'vehicle':
+                    # Draw vehicle even if it doesn't have an ID yet
+                    state = tracking_data.get(d.get('id', -1), {}).get('state', ['moving'])[-1] if 'id' in d else 'moving'
+                    color = self.state_colors.get(state, self.colors['vehicle'])
+                    cv2.rectangle(vis_frame, (x1, y1), (x2, y2), color, 2)
+                    label = f"V{d.get('id', 'NoID')} {d.get('velocity', 0):.1f}px/s"
+                    cv2.putText(vis_frame, label, (x1, y1 - 10), self.font, self.id_font_size, self.colors['text'], self.font_thickness)
+
+            # Draw events
+            for event in events:
+                tid = event['vehicle_id']
+                if tid in tracking_data:
+                    x1, y1, x2, y2 = map(int, tracking_data[tid]['bbox'][-1])
+                    expanded_bbox = (x1 - 50, y1 - 50, x2 - x1 + 100, y2 - y1 + 100)
+                    color = (0, 0, 255) if event.get('review_needed', False) else (153, 50, 204)  # Red for review, purple otherwise
+                    cv2.rectangle(vis_frame, (expanded_bbox[0], expanded_bbox[1]),
+                                  (expanded_bbox[0] + expanded_bbox[2], expanded_bbox[1] + expanded_bbox[3]), color, 2)
+                    decision_text = f"Decision: {event['event_type'].capitalize()}"
+                    if event.get('review_needed', False):
+                        decision_text += " - Review Needed"
+                    cv2.putText(vis_frame, decision_text, (x1, y2 + 20), self.font, self.font_size, self.colors['text'], self.font_thickness)
+                    velocity_text = f"Velocity: {event['velocity']:.1f}px/s"
+                    cv2.putText(vis_frame, velocity_text, (x1, y2 + 40), self.font, self.font_size, self.colors['text'], self.font_thickness)
+
+        elif self.current_mode == 'optical_flow':
+            if flow is not None:
+                step = 20
+                h, w = flow.shape[:2]
+                y, x = np.mgrid[step//2:h:step, step//2:w:step].reshape(2, -1).astype(int)
+                fx, fy = flow[y, x].T
+                lines = np.vstack([x, y, x + fx, y + fy]).T.reshape(-1, 2, 2)
+                lines = np.int32(lines + 0.5)
+                for (x1, y1), (x2, y2) in lines:
+                    cv2.arrowedLine(vis_frame, (x1, y1), (x2, y2), self.colors['flow'], 1, tipLength=0.3)
+
+        elif self.current_mode == 'depth':
+            if depth_map is not None:
+                vis_frame = cv2.addWeighted(vis_frame, 0.7, depth_map, 0.3, 0)
+
+        return vis_frame
 
     def set_mode(self, mode):
         """Set the current visualization mode."""
-        if mode in ['normal', 'depth', 'optical_flow']:
+        if mode in ['normal', 'optical_flow', 'depth']:
             self.current_mode = mode
-        else:
-            raise ValueError("Invalid visualization mode")
-
-    def visualize(self, frame, detections, tracking_data, flow=None, potential_areas=None, low_conf_detections=None):
-        """Render the frame based on the current mode with optional overlays."""
-        if self.current_mode == 'normal':
-            vis_frame = self.detector.visualize(frame, detections, tracking_data)
-            # Appended overlay for potential disposal areas
-            if potential_areas:
-                for area in potential_areas:
-                    cv2.rectangle(vis_frame, area['top_left'], area['bottom_right'], (0, 255, 255), 2)
-                    cv2.putText(vis_frame, "Potential Disposal", (area['top_left'][0], area['top_left'][1] - 10),
-                                self.font, self.font_size, (0, 255, 255), self.font_thickness)
-            # Appended overlay for low-confidence trash detections
-            if low_conf_detections:
-                for det in low_conf_detections:
-                    x1, y1, x2, y2 = map(int, det['bbox'])
-                    cv2.rectangle(vis_frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                    cv2.putText(vis_frame, "Potential Trash", (x1, y1 - 10), self.font, self.font_size, (0, 255, 255), self.font_thickness)
-            return vis_frame
-        elif self.current_mode == 'depth':
-            return self.depth_visualizer.visualize_depth(frame)
-        elif self.current_mode == 'optical_flow':
-            if flow is None:
-                flow = self.detector.compute_optical_flow(frame)
-            return self._visualize_optical_flow(frame, flow)
-
-    def _visualize_optical_flow(self, frame, flow):
-        """Render optical flow visualization."""
-        hsv = np.zeros_like(frame)
-        hsv[..., 1] = 255  # Saturation
-        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
-        hsv[..., 0] = ang * 180 / np.pi / 2  # Hue based on direction
-        hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)  # Value based on magnitude
-        return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)

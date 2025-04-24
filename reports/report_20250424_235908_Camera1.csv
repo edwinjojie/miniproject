@@ -1,0 +1,27 @@
+Timestamp,Camera ID,Vehicle ID,Event Type,Location,Velocity,Evidence
+2025-04-24 23:58:07,Camera1,2,unloading,"(505.1640930175781, 370.2231140136719)",0.94753957,Evidence generation failed
+2025-04-24 23:58:07,Camera1,2,hidden_disposal,"(505.1640930175781, 370.2231140136719)",0.94753957,Evidence generation failed
+2025-04-24 23:58:08,Camera1,0,hidden_disposal,"(1098.568603515625, 575.331298828125)",0.49244976,Evidence generation failed
+2025-04-24 23:58:08,Camera1,2,hidden_disposal,"(506.4045104980469, 370.36456298828125)",0.10278533,Evidence generation failed
+2025-04-24 23:58:14,Camera1,0,hidden_disposal,"(1033.7421875, 540.921875)",0.7177921,Evidence generation failed
+2025-04-24 23:58:18,Camera1,13,hidden_disposal,"(833.2347412109375, 264.83709716796875)",0.4700589,Evidence generation failed
+2025-04-24 23:58:20,Camera1,0,hidden_disposal,"(972.93310546875, 516.4210205078125)",0.21757425,Evidence generation failed
+2025-04-24 23:58:20,Camera1,13,hidden_disposal,"(833.7200927734375, 264.5551452636719)",0.1624977,Evidence generation failed
+2025-04-24 23:58:27,Camera1,13,unloading,"(832.282470703125, 263.0560302734375)",0.84382915,Evidence generation failed
+2025-04-24 23:58:27,Camera1,13,hidden_disposal,"(832.282470703125, 263.0560302734375)",0.84382915,Evidence generation failed
+2025-04-24 23:58:29,Camera1,0,hidden_disposal,"(886.7512817382812, 477.80816650390625)",3.6267684e-07,Evidence generation failed
+2025-04-24 23:58:29,Camera1,13,hidden_disposal,"(832.2811889648438, 263.0509033203125)",2.7644162e-06,Evidence generation failed
+2025-04-24 23:58:30,Camera1,13,unloading,"(832.7159423828125, 265.859375)",2.096308,Evidence generation failed
+2025-04-24 23:58:33,Camera1,13,unloading,"(835.3829956054688, 262.16632080078125)",2.5002327,Evidence generation failed
+2025-04-24 23:58:41,Camera1,13,unloading,"(836.5341796875, 261.96337890625)",2.5585918,Evidence generation failed
+2025-04-24 23:58:44,Camera1,0,unloading,"(757.7493896484375, 409.2575988769531)",0.7110779,Evidence generation failed
+2025-04-24 23:58:44,Camera1,0,hidden_disposal,"(757.7493896484375, 409.2575988769531)",0.7110779,Evidence generation failed
+2025-04-24 23:58:44,Camera1,13,unloading,"(835.3243408203125, 261.96124267578125)",0.29367608,Evidence generation failed
+2025-04-24 23:58:44,Camera1,13,hidden_disposal,"(835.3243408203125, 261.96124267578125)",0.29367608,Evidence generation failed
+2025-04-24 23:58:48,Camera1,13,unloading,"(834.70703125, 260.539794921875)",3.856518,Evidence generation failed
+2025-04-24 23:58:51,Camera1,0,hidden_disposal,"(692.767578125, 376.5582275390625)",0.43105274,Evidence generation failed
+2025-04-24 23:58:51,Camera1,13,hidden_disposal,"(834.5332641601562, 260.7575988769531)",0.24497397,Evidence generation failed
+2025-04-24 23:58:57,Camera1,13,unloading,"(837.4612426757812, 261.12408447265625)",3.313338,Evidence generation failed
+2025-04-24 23:58:58,Camera1,0,hidden_disposal,"(632.5071411132812, 346.427978515625)",0.7579064,Evidence generation failed
+2025-04-24 23:58:58,Camera1,13,hidden_disposal,"(837.5904541015625, 260.83563232421875)",0.34354293,Evidence generation failed
+2025-04-24 23:59:08,Camera1,13,unloading,"(832.3749389648438, 260.47918701171875)",2.2690454,Evidence generation failed

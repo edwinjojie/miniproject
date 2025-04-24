@@ -4,51 +4,41 @@ from flask_socketio import SocketIO, emit
 import os
 import cv2
 import io
-import csv
-import numpy as np
+import base64
+import tempfile
+import shutil
 from detection import Detector
 from tracking import Tracker
 from events import EventDetector
 from reporting import Reporter
-from visualization_manager import VisualizationManager  # Import the new manager
-import base64
-import tempfile
-import shutil
+from visualization_manager import VisualizationManager
 
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Storage Configuration
 UPLOAD_FOLDER = 'videos'
 EVIDENCE_FOLDER = 'evidence'
 REPORT_FOLDER = 'reports'
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 
-# Initialize components
-try:
-    detector = Detector(os.path.join(BASE_PATH, "models/yolov8m.pt"), os.path.join(BASE_PATH, "models/100epochv2.pt"))
-    tracker = Tracker(distance_threshold=150, max_inactive=30)
-    event_detector = EventDetector(temporal_window=10, min_holding=15, min_disposal=20, min_throw=5, depth_threshold=50)
-    reporter = Reporter(os.path.join(BASE_PATH, EVIDENCE_FOLDER), os.path.join(BASE_PATH, REPORT_FOLDER), "Location1")
-    vis_manager = VisualizationManager(detector)  # Initialize the visualization manager
-    events_data = []
-except Exception as e:
-    print(f"Initialization failed: {e}")
-    events_data = []
+detector = Detector(os.path.join(BASE_PATH, "models/yolov8m.pt"), os.path.join(BASE_PATH, "models/100epochv2.pt"))
+tracker = Tracker()
+event_detector = EventDetector()
+reporter = Reporter(os.path.join(BASE_PATH, EVIDENCE_FOLDER), os.path.join(BASE_PATH, REPORT_FOLDER))
+vis_manager = VisualizationManager(detector)
+events_data = {}
 
 @socketio.on('set_visualization_mode')
 def handle_set_visualization_mode(data):
     mode = data.get('mode')
-    if mode in ['normal', 'depth', 'optical_flow']:
+    if mode in ['normal', 'depth']:
         vis_manager.set_mode(mode)
         emit('mode_changed', {'mode': mode})
-    else:
-        emit('error', {'message': 'Invalid mode'})
 
-def process_video(video_path, sid):
+def process_video(video_path, sid, camera_id):
     global events_data
-    events_data = []
+    events_data[sid] = []
     cap = cv2.VideoCapture(video_path)
     tracker.frame_rate = cap.get(cv2.CAP_PROP_FPS)
     frame_count = 0
@@ -56,22 +46,24 @@ def process_video(video_path, sid):
         ret, frame = cap.read()
         if not ret:
             break
-        detections = detector.detect(frame)
-        tracker.assign_ids(detections, frame_count)
-        flow = detector.compute_optical_flow(frame)
-        event_detector.process(tracker.tracking_data, detections, frame, flow)
-        events_data.extend(event_detector.events_data[-1:])
+        if frame_count % 2 == 0:
+            detections = detector.detect(frame)
+            tracker.assign_ids(detections, frame_count)
+            flow, mag = detector.compute_optical_flow(frame)
+            depth_map = vis_manager.depth_visualizer.visualize_depth(frame) if vis_manager.current_mode == 'depth' else None
+            events = event_detector.process(tracker.tracking_data, {d['id']: (d['bbox'], d.get('velocity', 0)) for d in detections if d['type'] == 'vehicle'}, 
+                                          [d for d in detections if d['type'] == 'trash'], frame, flow, depth_map)
+            events_data[sid].extend(events)
 
-        # Use the visualization manager for rendering
-        vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, flow)
-        _, buffer = cv2.imencode('.jpg', vis_frame)
-        frame_data = base64.b64encode(buffer).decode('utf-8')
-        emit('frame_update', {'image': frame_data, 'frame_count': frame_count}, room=sid)
+            vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, events, flow)
+            _, buffer = cv2.imencode('.jpg', vis_frame)
+            frame_data = base64.b64encode(buffer).decode('utf-8')
+            emit('frame_update', {'image': frame_data, 'frame_count': frame_count, 'camera_id': camera_id}, room=sid)
 
         frame_count += 1
     cap.release()
-    reporter.export_events(events_data)
-    emit('processing_complete', {'eventsDetected': len(events_data), 'events': events_data}, room=sid)
+    report_path = reporter.export_events(events_data[sid], camera_id, frame, frame_count)
+    emit('processing_complete', {'report_path': report_path, 'events': events_data[sid]}, room=sid)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
@@ -81,20 +73,21 @@ def upload_video():
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
     if file and file.filename.endswith('.mp4'):
-        try:
-            os.makedirs(os.path.join(BASE_PATH, UPLOAD_FOLDER), exist_ok=True)
-            filename = f"upload_{os.urandom(8).hex()}.mp4"
-            temp_path = os.path.join(tempfile.gettempdir(), filename)
-            file.save(temp_path)
-            final_path = os.path.join(BASE_PATH, UPLOAD_FOLDER, filename)
-            shutil.move(temp_path, final_path)
-            sid = request.sid if hasattr(request, 'sid') else None
-            if sid:
-                socketio.start_background_task(target=process_video, video_path=final_path, sid=sid)
-            return jsonify({"message": "Processing started", "sid": sid}), 200
-        except Exception as e:
-            return jsonify({"error": f"Upload processing failed: {e}"}), 500
+        os.makedirs(os.path.join(BASE_PATH, UPLOAD_FOLDER), exist_ok=True)
+        filename = f"upload_{os.urandom(8).hex()}.mp4"
+        temp_path = os.path.join(tempfile.gettempdir(), filename)
+        file.save(temp_path)
+        final_path = os.path.join(BASE_PATH, UPLOAD_FOLDER, filename)
+        shutil.move(temp_path, final_path)
+        sid = request.sid
+        camera_id = request.form.get('camera_id', 'Camera1')
+        socketio.start_background_task(target=process_video, video_path=final_path, sid=sid, camera_id=camera_id)
+        return jsonify({"message": "Processing started", "sid": sid, "camera_id": camera_id}), 200
     return jsonify({"error": "Invalid file format"}), 400
+
+@app.route('/api/download/<path:report_path>', methods=['GET'])
+def download_report(report_path):
+    return send_file(report_path, as_attachment=True)
 
 if __name__ == "__main__":
     os.makedirs(os.path.join(BASE_PATH, UPLOAD_FOLDER), exist_ok=True)

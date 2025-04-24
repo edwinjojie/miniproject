@@ -1,125 +1,85 @@
-from collections import deque
+import cv2
 import numpy as np
-from scipy.optimize import linear_sum_assignment
+from collections import deque
 
 class Tracker:
-    def __init__(self, distance_threshold=150, max_inactive=30, frame_rate=30.0, fov_horizontal=60.0, resolution=(1280, 720)):
+    def __init__(self, max_age=10, min_hits=3, iou_threshold=0.3):
+        """Initialize tracker with SORT parameters."""
+        self.max_age = max_age
+        self.min_hits = min_hits
+        self.iou_threshold = iou_threshold
         self.tracking_data = {}
-        self.next_id = 1
-        self.dist_thresh = distance_threshold
-        self.max_inactive = max_inactive
-        self.frame_rate = frame_rate
-        self.fov_horizontal = fov_horizontal
-        self.resolution = resolution
-        self.pixel_to_meter = self._calibrate_pixel_to_meter()
+        self.next_id = 0
+        self.velocity_thresholds = {'slowing': 5.0, 'stopped': 1.0}
 
-    def _calibrate_pixel_to_meter(self):
-        """Calibrate pixel-to-meter conversion based on FOV."""
-        focal_length = self.resolution[0] / (2 * np.tan(np.radians(self.fov_horizontal / 2)))
-        return focal_length / 255.0
+    def assign_ids(self, detections):
+        """Assign tracking IDs to detections and update tracks."""
+        updated_tracks = {}
+        matched_ids = set()
 
-    def assign_ids(self, detections, current_frame):
-        """Assign IDs to detections and update tracking data."""
-        self._clean_inactive(current_frame)
-        
-        if not self.tracking_data:
-            for det in detections:
-                tid = self.next_id
-                det['id'] = tid
-                self._init_track(det, current_frame)
-                self.next_id += 1
-            return
+        for det in detections:
+            best_id, best_iou = None, -1
+            det_bbox = det['bbox']
+            for tid, track in self.tracking_data.items():
+                if tid in matched_ids:
+                    continue
+                track_bbox = track['bbox'][-1]
+                iou = self._compute_iou(det_bbox, track_bbox)
+                if iou > best_iou and iou >= self.iou_threshold:
+                    best_iou = iou
+                    best_id = tid
 
-        cost = np.zeros((len(detections), len(self.tracking_data)))
-        for i, det in enumerate(detections):
-            for j, (tid, track) in enumerate(self.tracking_data.items()):
-                cost[i, j] = self._calc_distance(det['center'], track['center'][-1])
-        
-        row_idx, col_idx = linear_sum_assignment(cost)
-        
-        assigned_dets = []
-        for r, c in zip(row_idx, col_idx):
-            if cost[r, c] < self.dist_thresh:
-                tid = list(self.tracking_data.keys())[c]
-                detections[r]['id'] = tid
-                self._update_track(tid, detections[r], current_frame)
-                assigned_dets.append(r)
-
-        for i, det in enumerate(detections):
-            if i not in assigned_dets:
-                tid = self.next_id
-                det['id'] = tid
-                self._init_track(det, current_frame)
+            if best_id is not None:
+                self._update_track(best_id, det)
+                updated_tracks[best_id] = self.tracking_data[best_id]
+                matched_ids.add(best_id)
+            else:
+                new_id = self.next_id
+                self._init_track(new_id, det)
+                updated_tracks[new_id] = self.tracking_data[new_id]
                 self.next_id += 1
 
-    def _calc_distance(self, p1, p2):
-        """Calculate 3D Euclidean distance between two points."""
-        return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2 + (p1[2] - p2[2])**2)
+        self.tracking_data = {tid: track for tid, track in updated_tracks.items()
+                              if len(track['bbox']) < self.max_age or tid in matched_ids}
+        return self.tracking_data
 
-    def _init_track(self, det, frame):
+    def _init_track(self, tid, det):
         """Initialize a new track."""
-        area = (det['bbox'][2] - det['bbox'][0]) * (det['bbox'][3] - det['bbox'][1])
-        self.tracking_data[det['id']] = {
+        self.tracking_data[tid] = {
+            'bbox': deque([det['bbox']], maxlen=self.max_age),
+            'center': deque([det['center']], maxlen=self.max_age),
+            'velocity': deque([det.get('velocity', 0.0)], maxlen=self.max_age),  # Default to 0.0 if missing
             'type': det['type'],
-            'bbox': det['bbox'],
-            'center': deque([det['center']], maxlen=30),
-            'area_history': deque([area], maxlen=5),
-            'velocity': deque([0.0], maxlen=5),
-            'smoothed_velocity': 0.0,
-            'last_seen': frame,
-            'state': 'IDLE'
+            'state': deque(['moving'], maxlen=self.max_age)
         }
         if det['type'] == 'trash':
-            self.tracking_data[det['id']]['trajectory'] = deque([det['center'][:2]], maxlen=10)
+            self.tracking_data[tid]['status'] = det.get('status', 'potential')
+            self.tracking_data[tid]['depth_history'] = deque(maxlen=10)
 
-    def _estimate_distance_from_area(self, depth, area):
-        """Estimate distance using depth and area."""
-        base_area = 10000
-        base_depth = 255.0
-        distance = np.sqrt(base_area * (base_depth / depth) / area)
-        return distance * self.pixel_to_meter
-
-    def _triangulate_position(self, center, area):
-        """Triangulate 3D position."""
-        depth = center[2]
-        estimated_distance = self._estimate_distance_from_area(depth, area)
-        x = (center[0] - self.resolution[0] / 2) * estimated_distance / (self.resolution[0] / 2)
-        y = (center[1] - self.resolution[1] / 2) * estimated_distance / (self.resolution[1] / 2)
-        z = depth * self.pixel_to_meter
-        return np.array([x, y, z])
-
-    def _update_track(self, tid, det, frame):
-        """Update track with refined velocity and smoothing."""
+    def _update_track(self, tid, det):
+        """Update an existing track."""
         track = self.tracking_data[tid]
-        prev_center = track['center'][-1]
-        current_center = det['center']
-        
-        track['bbox'] = det['bbox']
-        track['center'].append(current_center)
-        area = (det['bbox'][2] - det['bbox'][0]) * (det['bbox'][3] - det['bbox'][1])
-        track['area_history'].append(area)
-        track['last_seen'] = frame
-        
-        if track['type'] == 'trash':
-            track['trajectory'].append(current_center[:2])
-        
-        if len(track['center']) > 1:
-            prev_pos = self._triangulate_position(prev_center, track['area_history'][-2])
-            curr_pos = self._triangulate_position(current_center, area)
-            displacement = curr_pos - prev_pos
-            raw_velocity = np.linalg.norm(displacement) * self.frame_rate
-            if np.abs(raw_velocity) < 0.1:
-                velocity = 0.0
-            else:
-                velocity = raw_velocity
-            # Temporal smoothing
-            alpha = 0.3
-            track['smoothed_velocity'] = alpha * velocity + (1 - alpha) * track.get('smoothed_velocity', 0.0)
-            track['velocity'].append(track['smoothed_velocity'])
+        track['bbox'].append(det['bbox'])
+        track['center'].append(det['center'])
+        track['velocity'].append(det.get('velocity', 0.0))  # Default to 0.0 if missing
+        if det['type'] == 'trash':
+            track['status'] = det.get('status', 'potential')
+        velocity = det.get('velocity', 0.0)
+        state = 'moving'
+        if velocity < self.velocity_thresholds['stopped']:
+            state = 'stopped'
+        elif velocity < self.velocity_thresholds['slowing']:
+            state = 'slowing'
+        track['state'].append(state)
 
-    def _clean_inactive(self, current_frame):
-        """Remove inactive tracks."""
-        inactive = [tid for tid, data in self.tracking_data.items()
-                    if current_frame - data['last_seen'] > self.max_inactive]
-        for tid in inactive:
-            del self.tracking_data[tid]
+    def _compute_iou(self, bbox1, bbox2):
+        """Compute Intersection over Union between two bounding boxes."""
+        x1, y1, x2, y2 = bbox1
+        tx1, ty1, tx2, ty2 = bbox2
+        xi1, yi1 = max(x1, tx1), max(y1, ty1)
+        xi2, yi2 = min(x2, tx2), min(y2, ty2)
+        inter_area = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+        bbox1_area = (x2 - x1) * (y2 - y1)
+        bbox2_area = (tx2 - tx1) * (ty2 - ty1)
+        union_area = bbox1_area + bbox2_area - inter_area
+        return inter_area / union_area if union_area > 0 else 0

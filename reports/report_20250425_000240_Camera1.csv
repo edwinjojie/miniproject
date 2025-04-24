@@ -1,0 +1,17 @@
+Timestamp,Camera ID,Vehicle ID,Event Type,Location,Velocity,Evidence
+2025-04-25 00:02:11,Camera1,0,hidden_disposal,"(461.1351318359375, 264.7990417480469)",0.8028881,Evidence generation failed
+2025-04-25 00:02:11,Camera1,2,unloading,"(288.2062683105469, 374.3404235839844)",1.0479854,Evidence generation failed
+2025-04-25 00:02:12,Camera1,0,hidden_disposal,"(461.18896484375, 264.9836120605469)",0.12292985,Evidence generation failed
+2025-04-25 00:02:15,Camera1,0,unloading,"(463.966796875, 265.0747985839844)",1.8926444,Evidence generation failed
+2025-04-25 00:02:20,Camera1,1,hidden_disposal,"(580.6927490234375, 540.6971435546875)",0.5284468,Evidence generation failed
+2025-04-25 00:02:20,Camera1,0,hidden_disposal,"(464.98651123046875, 263.79638671875)",0.13943192,Evidence generation failed
+2025-04-25 00:02:21,Camera1,2,unloading,"(343.66986083984375, 376.3529968261719)",3.5636013,Evidence generation failed
+2025-04-25 00:02:31,Camera1,0,unloading,"(466.32977294921875, 260.4533386230469)",0.3995198,Evidence generation failed
+2025-04-25 00:02:31,Camera1,0,hidden_disposal,"(466.32977294921875, 260.4533386230469)",0.3995198,Evidence generation failed
+2025-04-25 00:02:32,Camera1,0,hidden_disposal,"(466.8668212890625, 262.74725341796875)",0.9803798,Evidence generation failed
+2025-04-25 00:02:34,Camera1,1,hidden_disposal,"(498.31390380859375, 478.3973388671875)",7.448556e-07,Evidence generation failed
+2025-04-25 00:02:34,Camera1,0,hidden_disposal,"(466.8770446777344, 262.7545166015625)",4.397722e-06,Evidence generation failed
+2025-04-25 00:02:34,Camera1,10,hidden_disposal,"(309.732177734375, 374.1886901855469)",0.00048352295,Evidence generation failed
+2025-04-25 00:02:39,Camera1,0,hidden_disposal,"(468.50946044921875, 252.2509765625)",0.9381096,Evidence generation failed
+2025-04-25 00:02:40,Camera1,1,hidden_disposal,"(462.6405029296875, 441.7398681640625)",0.14626843,Evidence generation failed
+2025-04-25 00:02:40,Camera1,0,hidden_disposal,"(468.69573974609375, 253.34437561035156)",0.05866839,Evidence generation failed

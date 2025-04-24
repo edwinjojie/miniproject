@@ -1,0 +1,9 @@
+Timestamp,Camera ID,Vehicle ID,Event Type,Location,Velocity,Evidence
+2025-04-24 23:40:33,Camera1,2,unloading,"(249.2687225341797, 186.46414184570312)",1.153111,Evidence generation failed
+2025-04-24 23:40:34,Camera1,2,hidden_disposal,"(253.77651977539062, 185.37518310546875)",0.78552765,Evidence generation failed
+2025-04-24 23:40:35,Camera1,0,hidden_disposal,"(549.2137451171875, 287.90533447265625)",0.19192263,Evidence generation failed
+2025-04-24 23:40:35,Camera1,2,hidden_disposal,"(253.47268676757812, 185.44253540039062)",0.091914214,Evidence generation failed
+2025-04-24 23:40:38,Camera1,0,hidden_disposal,"(516.916259765625, 270.8125)",0.35619456,Evidence generation failed
+2025-04-24 23:40:40,Camera1,11,hidden_disposal,"(416.65655517578125, 132.17755126953125)",0.35887408,Evidence generation failed
+2025-04-24 23:40:40,Camera1,0,hidden_disposal,"(486.6224060058594, 258.31524658203125)",0.121698506,Evidence generation failed
+2025-04-24 23:40:40,Camera1,11,hidden_disposal,"(416.86920166015625, 131.9297637939453)",0.10445204,Evidence generation failed
