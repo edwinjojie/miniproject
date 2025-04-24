@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import { Home } from './components/Home';
 import { VideoUpload } from './components/VideoUpload';
 import { CameraDashboard } from './components/CameraDashboard';
-import { EventReview } from './components/EventReview';
+//import { EventReview } from './components/EventReview';
 import { About } from './components/About';
 import { Camera, Upload, Monitor, FileText, Info } from 'lucide-react';
 
@@ -48,7 +48,7 @@ function App() {
             <Route path="/" element={<Home />} />
             <Route path="/upload" element={<VideoUpload />} />
             <Route path="/dashboard" element={<CameraDashboard />} />
-            <Route path="/events" element={<EventReview />} />
+            
             <Route path="/about" element={<About />} />
           </Routes>
         </main>

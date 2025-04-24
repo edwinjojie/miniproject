@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { Play, Pause, RefreshCw, Download } from 'lucide-react';
-import { dummyCameras, mockExportExcel, mockExportReport } from '../data';
+import { dummyCameras/* mockExportExcel, mockExportReport*/ } from '../data';
 
-export function CameraDashboard() {
+ export function CameraDashboard() {
   const [cameras, setCameras] = useState(dummyCameras);
-  const [selectedEvents, setSelectedEvents] = useState({});
+  //const [selectedEvents, setSelectedEvents] = useState({});
 
   const handlePlayPause = (id) => {
     console.log(`${cameras.find(c => c.id === id).status === 'Playing' ? 'Paused' : 'Playing'} camera ${id}`);
@@ -38,7 +38,7 @@ export function CameraDashboard() {
     return new Promise(resolve => setTimeout(() => resolve(incidents), 2000));
   };
 
-  const handleExportSelected = async () => {
+  /*const handleExportSelected = async () => {
     const selectedIds = Object.entries(selectedEvents)
       .filter(([_, selected]) => selected)
       .map(([id]) => parseInt(id));
@@ -51,7 +51,7 @@ export function CameraDashboard() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
+*/
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-center">

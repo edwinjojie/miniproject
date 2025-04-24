@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Download, ChevronDown, ChevronUp } from 'lucide-react';
-import { mockEvents, mockExportExcel, mockExportReport } from '../data';
+//import { mockEvents, mockExportExcel, mockExportReport } from '../data';
+import axios from 'axios'
 
-export function EventReview() {
+/*export function EventReview() {
   const [events, setEvents] = useState([]);
   const [expandedEvent, setExpandedEvent] = useState(null);
   const [selectedEvents, setSelectedEvents] = useState({});
@@ -57,7 +58,7 @@ export function EventReview() {
     );
   }
 
-  return (
+  return (*/
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Event Review</h1>
@@ -195,5 +196,5 @@ export function EventReview() {
         </table>
       </div>
     </div>
-  );
-}
+ // );
+//}

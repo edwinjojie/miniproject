@@ -1,7 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, FileText, RefreshCw } from 'lucide-react';
-import { mockUpload, mockExportExcel, mockExportReport, initializeWebSocket } from '../data';
 
 export function VideoUpload() {
   const [file, setFile] = useState(null);
@@ -10,25 +9,15 @@ export function VideoUpload() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [events, setEvents] = useState([]);
-  const fileInputRef = useRef();
-  const navigate = useNavigate();
-  const canvasRef = useRef(null);
 
-  useEffect(() => {
-    const handleNewEvent = (e) => setEvents(prev => [...prev, ...e.detail]);
-    const handleComplete = (e) => setResult(e.detail);
-    window.addEventListener('newEvent', handleNewEvent);
-    window.addEventListener('processingComplete', handleComplete);
-    return () => {
-      window.removeEventListener('newEvent', handleNewEvent);
-      window.removeEventListener('processingComplete', handleComplete);
-    };
-  }, []);
+  const fileInputRef = useRef();
+  const canvasRef = useRef();
+  const navigate = useNavigate();
 
   const handleDrop = (e) => {
     e.preventDefault();
     const droppedFile = e.dataTransfer.files[0];
-    if (droppedFile?.type.startsWith('video/')) {
+    if (droppedFile?.type.endsWith('.mp4')) {
       setFile(droppedFile);
       processVideo(droppedFile);
     }
@@ -48,13 +37,31 @@ export function VideoUpload() {
     setResult(null);
     setError(null);
     setEvents([]);
-    const interval = setInterval(() => setProgress(prev => Math.min(prev + 10, 90)), 300);
+
+    // fake‐progress until we get a response
+    const timer = setInterval(() => {
+      setProgress((p) => Math.min(p + 15, 85));
+    }, 300);
+
     try {
-      const data = await mockUpload(videoFile);
-      clearInterval(interval); // Stop progress simulation once WebSocket takes over
-    } catch (error) {
-      setError(`Upload failed: ${error.message}`);
-      clearInterval(interval);
+      const form = new FormData();
+      form.append('file', videoFile);
+
+      const res = await fetch('http://localhost:5000/api/upload', {
+        method: 'POST',
+        body: form,
+      });
+      clearInterval(timer);
+
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}`);
+      }
+      const json = await res.json();
+      setResult(json);
+      setEvents(json.events || []);
+      setProgress(100);
+    } catch (err) {
+      setError(`Upload failed: ${err.message}`);
     } finally {
       setProcessing(false);
     }
@@ -62,22 +69,26 @@ export function VideoUpload() {
 
   const handleExportAll = async () => {
     try {
-      const blob = await mockExportExcel();
+      const res = await fetch('http://localhost:5000/export/all');
+      if (!res.ok) throw new Error(`Server returned ${res.status}`);
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = 'events.csv';
       a.click();
       URL.revokeObjectURL(url);
-    } catch (error) {
-      setError(`Export failed: ${error.message}`);
+    } catch (err) {
+      setError(`Export failed: ${err.message}`);
     }
   };
 
   const handleExportReports = async () => {
     try {
       for (let i = 1; i <= 3; i++) {
-        const blob = await mockExportReport(i);
+        const res = await fetch(`http://localhost:5000/export/report/${i}`);
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const blob = await res.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -85,20 +96,23 @@ export function VideoUpload() {
         a.click();
         URL.revokeObjectURL(url);
       }
-    } catch (error) {
-      setError(`Report export failed: ${error.message}`);
+    } catch (err) {
+      setError(`Report export failed: ${err.message}`);
     }
   };
 
   return (
     <div className="max-w-2xl mx-auto">
+      {/* Dropzone */}
       <div
         className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center"
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
       >
         <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-        <p className="text-gray-600 mb-4">Drag and drop a video file here, or</p>
+        <p className="text-gray-600 mb-4">
+          Drag and drop a video file here, or
+        </p>
         <input
           type="file"
           ref={fileInputRef}
@@ -114,30 +128,51 @@ export function VideoUpload() {
         </button>
       </div>
 
+      {/* Processing */}
       {processing && (
         <div className="mt-8">
-          <p className="text-gray-600 mb-2">Processing video...</p>
-          <div className="progress-bar">
-            <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
+          <p className="text-gray-600 mb-2">
+            Processing video… {progress}%
+          </p>
+          <div className="progress-bar bg-gray-200 rounded-full h-2 overflow-hidden">
+            <div
+              className="progress-bar-fill h-full"
+              style={{ width: `${progress}%` }}
+            />
           </div>
-          <img id="live-canvas" ref={canvasRef} alt="Live Visualization" className="mt-4 w-full" />
+          <canvas
+            id="live-canvas"
+            ref={canvasRef}
+            alt="Live Visualization"
+            className="mt-4 w-full"
+          />
         </div>
       )}
 
+      {/* Result */}
       {result && (
         <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
-          <h2 className="text-xl font-semibold mb-4">Processing Complete</h2>
-          <p className="text-gray-600 mb-4">{result.eventsDetected} disposal events detected</p>
+          <h2 className="text-xl font-semibold mb-4">
+            Processing Complete
+          </h2>
+          <p className="text-gray-600 mb-4">
+            {result.eventsDetected} disposal events detected
+          </p>
+
           {events.length > 0 && (
             <div className="mb-4">
               <h3 className="text-lg font-medium">Detected Events:</h3>
               <ul className="list-disc pl-6">
-                {events.map((event, index) => (
-                  <li key={index}>{`ID: ${event.vehicle_id}, Type: ${event.event_type}, Time: ${event.timestamp}`}</li>
+                {events.map((evt, idx) => (
+                  <li key={idx}>
+                    ID: {evt.vehicle_id}, Type: {evt.event_type}, Time:{' '}
+                    {evt.timestamp}
+                  </li>
                 ))}
               </ul>
             </div>
           )}
+
           <div className="space-y-4">
             <button
               onClick={handleExportAll}
@@ -176,6 +211,7 @@ export function VideoUpload() {
         </div>
       )}
 
+      {/* Error */}
       {error && (
         <div className="mt-8 bg-red-100 p-4 rounded-lg text-red-700">
           {error}

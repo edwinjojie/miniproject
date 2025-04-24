@@ -1,9 +1,8 @@
 // API_BASE_URL is injected by Create React App from .env during build
 // Fallback to localhost if not defined (safe for browser runtime)
-const API_BASE_URL = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : 'http://localhost:5000';
-let socket;
 
-export const initializeWebSocket = (sid) => {
+
+/*export const initializeWebSocket = (sid) => {
   socket = new WebSocket(`ws://${API_BASE_URL.replace('http', 'ws')}/socket.io/?EIO=4&transport=websocket&sid=${sid}`);
   socket.onmessage = (event) => {
     const data = JSON.parse(event.data);
@@ -17,12 +16,17 @@ export const initializeWebSocket = (sid) => {
   };
   socket.onerror = (error) => console.error('WebSocket error:', error);
   socket.onclose = () => console.log('WebSocket closed');
-};
+};*/
+
+
+
+const API_BASE_URL = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : 'http://localhost:5000';
 
 export const mockUpload = (file) => {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append('file', file);
+    
     fetch(`${API_BASE_URL}/api/upload`, {
       method: 'POST',
       body: formData,
@@ -32,7 +36,6 @@ export const mockUpload = (file) => {
         return response.json();
       })
       .then(data => {
-        initializeWebSocket(data.sid); // Start WebSocket with session ID
         resolve(data);
       })
       .catch(error => reject(error));
@@ -48,7 +51,7 @@ export const mockEvents = () => {
     .then(data => data)
     .catch(error => { throw error; });
 };
-
+/*
 export const mockExportExcel = (ids) => {
   const url = ids ? `${API_BASE_URL}/api/export/excel?ids=${ids.join(',')}` : `${API_BASE_URL}/api/export/excel`;
   return fetch(url)
@@ -68,7 +71,7 @@ export const mockExportReport = (id) => {
     })
     .then(blob => blob)
     .catch(error => { throw error; });
-};
+};*/
 
 export const dummyEvents = [
   { id: 1, timestamp: '2025-03-26 14:32', source: 'Camera 01', type: 'Vehicle', description: 'Trash disposed', position: [320, 240, 1500] },
