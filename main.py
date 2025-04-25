@@ -15,7 +15,7 @@ def process_video(video_path, vehicle_model_path, trash_model_path, output_path)
         print(f"Error: Could not open video {video_path}")
         sys.exit(1)
 
-    # Define the desired resolution for visualization (1280x720 for wider and taller display)
+    # Define the desired resolution for visualization (1080x720 as requested)
     # Change these values to adjust the output resolution if needed
     output_width, output_height = 1080, 720
 
@@ -27,8 +27,13 @@ def process_video(video_path, vehicle_model_path, trash_model_path, output_path)
     reporter = Reporter("evidence", "reports")
     config.frame_count = 0
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    # Use XVID codec with .avi extension for compatibility
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
     out = cv2.VideoWriter(output_path, fourcc, 30.0, (output_width, output_height))
+    if not out.isOpened():
+        print("Error: Could not open video writer")
+        sys.exit(1)
+
     events_data = []
 
     while cap.isOpened():
@@ -75,4 +80,4 @@ if __name__ == "__main__":
     if len(sys.argv) != 4:
         print("Usage: python main.py <video_path> <vehicle_model_path> <trash_model_path>")
         sys.exit(1)
-    process_video(sys.argv[1], sys.argv[2], sys.argv[3], 'output.mp4')
+    process_video(sys.argv[1], sys.argv[2], sys.argv[3], 'output.avi')  # Changed to match .avi extension
