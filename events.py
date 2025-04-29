@@ -10,8 +10,8 @@ class EventDetector:
         self.prev_vehicle_tracks = {}
         self.prev_trash_counts = {}
 
-    def process(self, tracking_data, detections, frame, flow=None, depth_map=None):
-        """Detect disposal events based on tracking data and detections."""
+    def process(self, tracking_data, detections, frame, frame_count, flow=None, depth_map=None):
+        """Detect disposal events with frame_count included in events."""
         events = []
         trash_detections = [d for d in detections if d['type'] == 'trash']
         vehicle_tracks = {tid: track for tid, track in tracking_data.items() if track['type'] == 'vehicle'}
@@ -19,9 +19,10 @@ class EventDetector:
 
         # Update depth history for trash tracks
         if depth_map is not None:
+            raw_depth, _ = depth_map  # Unpack raw depth and color-mapped depth
             for tid, track in trash_tracks.items():
                 x, y = map(int, track['center'][-1])
-                depth = depth_map[y, x] if 0 <= y < depth_map.shape[0] and 0 <= x < depth_map.shape[1] else 0
+                depth = raw_depth[y, x] if 0 <= y < raw_depth.shape[0] and 0 <= x < raw_depth.shape[1] else 0
                 track['depth_history'].append(depth)
 
         for tid, track in vehicle_tracks.items():
@@ -41,7 +42,8 @@ class EventDetector:
                                 'event_type': 'throwing',
                                 'location': vehicle_center,
                                 'velocity': track['velocity'][-1],
-                                'review_needed': trash['status'] == 'potential'
+                                'review_needed': trash['status'] == 'potential',
+                                'frame_count': frame_count
                             })
 
             # Unloading event
@@ -54,7 +56,8 @@ class EventDetector:
                     'event_type': 'unloading',
                     'location': vehicle_center,
                     'velocity': track['velocity'][-1],
-                    'review_needed': any(t['status'] == 'potential' for t in curr_trash)
+                    'review_needed': any(t['status'] == 'potential' for t in curr_trash),
+                    'frame_count': frame_count
                 })
             self.prev_trash_counts[tid] = len(curr_trash)
 
@@ -69,7 +72,8 @@ class EventDetector:
                     'event_type': 'hidden_disposal',
                     'location': vehicle_center,
                     'velocity': track['velocity'][-1],
-                    'review_needed': any(t['status'] == 'potential' for t in new_trash)
+                    'review_needed': any(t['status'] == 'potential' for t in new_trash),
+                    'frame_count': frame_count
                 })
 
             # Confirmed disposal event using trash tracks
@@ -77,7 +81,7 @@ class EventDetector:
                 for trash_tid, trash_track in trash_tracks.items():
                     if len(trash_track['depth_history']) > 1:
                         depth_change = trash_track['depth_history'][-1] - trash_track['depth_history'][-2]
-                        if abs(depth_change) > self.depth_threshold:
+                        if abs(depth_change) > self.depth_threshold:  # Now a scalar comparison
                             tx, ty = map(int, trash_track['center'][-1])
                             if not (x1 < tx < x2 and y1 < ty < y2) and self.is_outward_motion(vehicle_center, flow, tx, ty):
                                 events.append({
@@ -87,10 +91,13 @@ class EventDetector:
                                     'event_type': 'confirmed_disposal',
                                     'location': vehicle_center,
                                     'velocity': track['velocity'][-1],
-                                    'review_needed': trash_track['status'] == 'potential'
+                                    'review_needed': trash_track['status'] == 'potential',
+                                    'frame_count': frame_count
                                 })
 
         self.prev_vehicle_tracks = vehicle_tracks
+        if events:
+            print(f"Events detected at frame {frame_count}: {len(events)}")
         return events
 
     def is_outward_motion(self, vehicle_center, flow, x, y):

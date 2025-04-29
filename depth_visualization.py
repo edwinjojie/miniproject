@@ -16,7 +16,7 @@ class DepthVisualizer:
         ])
 
     def visualize_depth(self, frame):
-        """Generate and visualize the depth map."""
+        """Generate and visualize the depth map, returning both raw and color-mapped versions."""
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img_input = self.transform(img_rgb).unsqueeze(0).to('cpu')
         with torch.no_grad():
@@ -24,6 +24,8 @@ class DepthVisualizer:
             depth = torch.nn.functional.interpolate(
                 depth.unsqueeze(1), size=frame.shape[:2], mode="bicubic", align_corners=False
             ).squeeze().cpu().numpy()
-        depth_normalized = (depth - depth.min()) / (depth.max() - depth.min()) * 255.0
-        depth_map = depth_normalized.astype(np.uint8)
-        return cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
+        # Normalize depth for visualization
+        depth_normalized = (depth - depth.min()) / (depth.max() - depth.min())
+        depth_map = (depth_normalized * 255.0).astype(np.uint8)
+        color_mapped = cv2.applyColorMap(depth_map, cv2.COLORMAP_JET)
+        return depth_normalized, color_mapped  # Return raw normalized depth and color-mapped image

@@ -1,0 +1,2 @@
+Timestamp,Camera ID,Vehicle ID,Event Type,Location,Velocity,Confidence,Before Image,After Image,Evidence Path
+2025-04-25 07:37:07,Camera1,0,hidden_disposal,"(684.9149780273438, 495.7157897949219)",0.02,0.00,evidence\event_20250425_073707_0\before.jpg,evidence\event_20250425_073707_0\after.jpg,evidence\event_20250425_073707_0\clip.mp4
