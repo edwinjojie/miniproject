@@ -58,12 +58,13 @@ def process_video(video_path, sid, camera_id):
             vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, events, flow)
             _, buffer = cv2.imencode('.jpg', vis_frame)
             frame_data = base64.b64encode(buffer).decode('utf-8')
-            emit('frame_update', {'image': frame_data, 'frame_count': frame_count, 'camera_id': camera_id}, room=sid)
+            # Use socketio.emit so background thread can emit to the client's room
+            socketio.emit('frame_update', {'image': frame_data, 'frame_count': frame_count, 'camera_id': camera_id}, to=sid)
 
         frame_count += 1
     cap.release()
-    report_path = reporter.export_events(events_data[sid], camera_id, frame, frame_count)
-    emit('processing_complete', {'report_path': report_path, 'events': events_data[sid]}, room=sid)
+    report_path = reporter.export_events(events_data[sid], camera_id)
+    socketio.emit('processing_complete', {'report_path': report_path, 'events': events_data[sid]}, to=sid)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
@@ -79,9 +80,15 @@ def upload_video():
         file.save(temp_path)
         final_path = os.path.join(BASE_PATH, UPLOAD_FOLDER, filename)
         shutil.move(temp_path, final_path)
-        sid = request.sid
+        # Accept socket id from the HTTP form (frontend should include `sid` from socket.io)
+        sid = request.form.get('sid') or request.args.get('sid')
         camera_id = request.form.get('camera_id', 'Camera1')
-        socketio.start_background_task(target=process_video, video_path=final_path, sid=sid, camera_id=camera_id)
+        if not sid:
+            # Log a warning; if no sid provided, processing will still run but frames may be broadcast
+            app.logger.warning('No socket sid provided with upload; frames will be broadcast')
+
+        # Start background processing. Use positional args to avoid signature issues.
+        socketio.start_background_task(process_video, final_path, sid, camera_id)
         return jsonify({"message": "Processing started", "sid": sid, "camera_id": camera_id}), 200
     return jsonify({"error": "Invalid file format"}), 400
 

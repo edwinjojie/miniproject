@@ -1,10 +1,10 @@
-// API_BASE_URL is injected by Create React App from .env during build
-// Fallback to localhost if not defined (safe for browser runtime)
-const API_BASE_URL = typeof process !== 'undefined' && process.env ? process.env.REACT_APP_API_URL : 'http://localhost:5000';
+const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:5000';
 let socket;
 
 export const initializeWebSocket = (sid) => {
-  socket = new WebSocket(`ws://${API_BASE_URL.replace('http', 'ws')}/socket.io/?EIO=4&transport=websocket&sid=${sid}`);
+  const wsProto = API_BASE_URL.startsWith('https') ? 'wss' : 'ws';
+  const wsUrl = API_BASE_URL.replace(/^https?/, wsProto);
+  socket = new WebSocket(`${wsUrl}/socket.io/?EIO=4&transport=websocket&sid=${sid}`);
   socket.onmessage = (event) => {
     const data = JSON.parse(event.data);
     if (data.frame_update) {
@@ -45,8 +45,9 @@ export const mockEvents = () => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       return response.json();
     })
-    .then(data => data)
-    .catch(error => { throw error; });
+    .catch(() => {
+      return dummyEvents;
+    });
 };
 
 export const mockExportExcel = (ids) => {
@@ -56,8 +57,13 @@ export const mockExportExcel = (ids) => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       return response.blob();
     })
-    .then(blob => blob)
-    .catch(error => { throw error; });
+    .catch(() => {
+      const rows = [['Event ID','Timestamp','Source','Type','Description','X','Y','Z']];
+      const source = ids && ids.length ? dummyEvents.filter(e => ids.includes(e.id)) : dummyEvents;
+      source.forEach(e => rows.push([e.id, e.timestamp, e.source, e.type, e.description, e.position[0], e.position[1], e.position[2]]));
+      const csv = rows.map(r => r.join(',')).join('\n');
+      return new Blob([csv], { type: 'text/csv' });
+    });
 };
 
 export const mockExportReport = (id) => {
@@ -66,8 +72,11 @@ export const mockExportReport = (id) => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       return response.blob();
     })
-    .then(blob => blob)
-    .catch(error => { throw error; });
+    .catch(() => {
+      const e = dummyEvents.find(x => x.id === id) || dummyEvents[0];
+      const content = `Event Report\nID: ${e.id}\nTimestamp: ${e.timestamp}\nSource: ${e.source}\nType: ${e.type}\nDescription: ${e.description}\nPosition: ${e.position.join(', ')}`;
+      return new Blob([content], { type: 'text/plain' });
+    });
 };
 
 export const dummyEvents = [

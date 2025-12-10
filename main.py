@@ -5,13 +5,23 @@ from detection import Detector
 from tracking import Tracker
 from events import EventDetector
 from visualization_manager import VisualizationManager
-from depth_visualization import DepthVisualizer
 from reporting import Reporter
 import config
 import os
 
+# Try to import depth visualization, but make it optional
+try:
+    from depth_visualization import DepthVisualizer
+    DEPTH_AVAILABLE = True
+except Exception as e:
+    print(f"Warning: Depth visualization not available: {e}")
+    print("Continuing without depth estimation...")
+    DEPTH_AVAILABLE = False
+
 def process_video(video_path, vehicle_model_path, trash_model_path, output_path):
     """Process video to detect waste disposal events with larger resolution."""
+    global DEPTH_AVAILABLE
+    
     # Set video_path in config
     config.video_path = video_path
     
@@ -28,7 +38,18 @@ def process_video(video_path, vehicle_model_path, trash_model_path, output_path)
     tracker = Tracker()
     event_detector = EventDetector()
     vis_manager = VisualizationManager()
-    depth_visualizer = DepthVisualizer()
+    
+    # Initialize depth visualizer only if available
+    depth_visualizer = None
+    if DEPTH_AVAILABLE:
+        try:
+            depth_visualizer = DepthVisualizer()
+            print("Depth visualization initialized successfully")
+        except Exception as e:
+            print(f"Warning: Could not initialize depth visualization: {e}")
+            print("Continuing without depth estimation...")
+            DEPTH_AVAILABLE = False
+    
     reporter = Reporter("evidence", "reports")
     config.frame_count = 0
 
@@ -56,13 +77,23 @@ def process_video(video_path, vehicle_model_path, trash_model_path, output_path)
         tracking_data = tracker.assign_ids(detections)
         flow, _ = detector.compute_optical_flow(frame)
         mode = vis_manager.current_mode
-        depth_map = depth_visualizer.visualize_depth(frame) if mode == 'depth' else None
+        
+        # Get depth map only if available
+        depth_map = None
+        if DEPTH_AVAILABLE and depth_visualizer and mode == 'depth':
+            try:
+                depth_map = depth_visualizer.visualize_depth(frame)
+            except Exception as e:
+                print(f"Warning: Depth visualization failed: {e}")
+                depth_map = None
 
         # Pass frame_count to event detector
         events = event_detector.process(tracking_data, detections, frame, config.frame_count, flow, depth_map)
         events_data.extend(events)
         
-        vis_frame = vis_manager.visualize(frame, detections, tracking_data, events, flow, depth_map[1] if depth_map else None)  # Use color-mapped depth for visualization
+        # Use color-mapped depth for visualization if available
+        depth_color_map = depth_map[1] if depth_map else None
+        vis_frame = vis_manager.visualize(frame, detections, tracking_data, events, flow, depth_color_map)
         
         # Verify vis_frame format before writing
         if vis_frame.shape == (output_height, output_width, 3) and vis_frame.dtype == np.uint8:
@@ -80,7 +111,10 @@ def process_video(video_path, vehicle_model_path, trash_model_path, output_path)
         elif key == ord('o'):
             vis_manager.set_mode('optical_flow')
         elif key == ord('d'):
-            vis_manager.set_mode('depth')
+            if DEPTH_AVAILABLE:
+                vis_manager.set_mode('depth')
+            else:
+                print("Depth mode not available - continuing in normal mode")
 
     # Generate report with all events
     print(f"Total events detected: {len(events_data)}")
