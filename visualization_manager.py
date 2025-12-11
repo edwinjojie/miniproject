@@ -201,73 +201,59 @@ class VisualizationManager:
                 cv2.putText(frame, confidence_text, (x1, y1 - 10), self.font, 
                           0.5, self.colors['potential'], 1)
         
-        # Draw all main detections
+        # Draw all main detections using new validation logic
         for d in detections:
-            x1, y1, x2, y2 = map(int, d['bbox'])
+            self._draw_single_detection(frame, d, tracking_data)
+
+    def _draw_single_detection(self, frame, det, tracking_data=None):
+        """Draw detection with color coding by validation state"""
+        bbox = list(map(int, det['bbox']))
+        x1, y1, x2, y2 = bbox
+        
+        # Determine color based on type and validation state
+        if det['type'] == 'trash':
+            state = det.get('validation_state', 'POTENTIAL')
             
-            if d['type'] == 'trash':
-                # Determine trash color and label based on its status
-                if d['context'] == 'proper':
-                    color = self.colors['proper']
-                    label = 'Proper Disposal'
-                elif d.get('status', 'potential') == 'confirmed':
-                    color = self.colors['confirmed']
-                    label = 'Confirmed Trash'
-                else:
-                    color = self.colors['potential']
-                    label = 'Potential Trash'
+            if state == 'CONFIRMED':
+                color = (0, 255, 0)  # GREEN - confirmed trash
+                thickness = 2
+                label_prefix = "✓ CONFIRMED"
+            elif state == 'SUSPICIOUS':
+                color = (0, 255, 255)  # YELLOW - under review
+                thickness = 1
+                label_prefix = "? SUSPICIOUS"
+            elif state == 'POTENTIAL':
+                color = (255, 200, 0)  # CYAN - tracking
+                thickness = 1
+                label_prefix = "○ POTENTIAL"
+            else:  # Should not appear (rejected)
+                return  # Don't draw rejected detections
                 
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                if self.settings['show_ids']:
-                    # Display trash label with ID if available
-                    trash_id = d.get('id', '')
-                    id_text = f"{label} #{trash_id}" if trash_id else label
-                    cv2.putText(frame, id_text, (x1, y1 - 10), self.font, 
-                              self.id_font_size, self.colors['text'], self.font_thickness)
-                
-                # Show confidence if enabled
-                if self.settings['show_confidence'] and 'confidence' in d:
-                    conf_text = f"Conf: {d['confidence']:.2f}"
-                    cv2.putText(frame, conf_text, (x1, y1 - 30), self.font, 
-                              0.6, self.colors['text'], 1)
-            
-            elif d['type'] == 'vehicle':
-                # Get vehicle track state if available
-                vehicle_id = d.get('id', -1)
-                state = 'moving'  # Default state
-                
-                if vehicle_id in tracking_data:
-                    track = tracking_data[vehicle_id]
-                    state = track.get('state', ['moving'])[-1]
-                
-                # Set color based on vehicle state
-                color = self.state_colors.get(state, self.colors['vehicle'])
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                
-                # Only show IDs if setting enabled
-                if self.settings['show_ids']:
-                    id_text = f"V{vehicle_id}" if vehicle_id != -1 else "Vehicle"
-                    cv2.putText(frame, id_text, (x1, y1 - 10), self.font, 
-                              self.id_font_size, self.colors['text'], self.font_thickness)
-                
-                # Show velocity if setting enabled
-                if self.settings['show_velocity'] and 'velocity' in d:
-                    vel_text = f"{d['velocity']:.1f}px/s"
-                    cv2.putText(frame, vel_text, (x1, y1 - 30), self.font, 
-                              0.6, self.colors['text'], 1)
-                
-                # Show confidence if setting enabled  
-                if self.settings['show_confidence'] and 'confidence' in d:
-                    conf_text = f"Conf: {d['confidence']:.2f}"
-                    cv2.putText(frame, conf_text, (x1, y1 - 50), self.font, 
-                              0.6, self.colors['text'], 1)
-            
-            elif d['type'] == 'bin':
-                # Draw bins with a distinct color
-                cv2.rectangle(frame, (x1, y1), (x2, y2), self.colors['bin'], 2)
-                if self.settings['show_ids']:
-                    cv2.putText(frame, "Bin", (x1, y1 - 10), self.font, 
-                              self.id_font_size, self.colors['text'], self.font_thickness)
+        elif det['type'] == 'vehicle':
+            color = (255, 0, 0)  # BLUE for vehicles
+            thickness = 2
+            label_prefix = "VEHICLE"
+        elif det['type'] == 'bin':
+            color = (0, 165, 255)  # ORANGE for bins
+            thickness = 2
+            label_prefix = "BIN"
+        else:
+            color = (200, 200, 200)  # GRAY for others
+            thickness = 1
+            label_prefix = det['type'].upper()
+        
+        # Draw bounding box
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
+        
+        # Draw label
+        conf = det.get('confidence', 0)
+        track_id = det.get('id', 'N/A')
+        label = f"{label_prefix} ID:{track_id} {conf:.2f}"
+        
+        # Background for text
+        (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(frame, (x1, y1 - text_height - 4), (x1 + text_width, y1), color, -1)
+        cv2.putText(frame, label, (x1, y1 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
     def _draw_events(self, frame, events, tracking_data):
         """Draw event regions and information."""

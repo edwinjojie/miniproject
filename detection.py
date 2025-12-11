@@ -2,12 +2,15 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 from collections import defaultdict
+from detection_validator import DetectionValidator
+import torch
 
 class Detector:
     def __init__(self, vehicle_model_path, trash_model_path, confirmation_threshold=3, disposal_confirmation_threshold=3):
         """Initialize with vehicle and trash YOLO models and confirmation thresholds."""
         self.vehicle_model = YOLO(vehicle_model_path)
         self.trash_model = YOLO(trash_model_path)
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self.prev_frame = None
         self.trash_confirmation_threshold = confirmation_threshold  # Frames to confirm trash
         self.disposal_confirmation_threshold = disposal_confirmation_threshold  # Events to confirm disposal
@@ -16,74 +19,142 @@ class Detector:
         self.video_writer = None  # For saving cropped clips
         self.frame_buffer = []  # Buffer to store frames for clips
 
-    def detect(self, frame):
-        """Detect vehicles, trash, and bins with confirmation logic."""
+        # Initialize detection validator
+        self.validator = DetectionValidator()
+        print("[VALIDATOR] Detection validator initialized")
+
+    def detect(self, frame, prev_frame=None, flow=None, frame_count=0):
+        """
+        Run detection with initial validation filters.
+        
+        Args:
+            frame: Current frame
+            prev_frame: Previous frame for optical flow
+            flow: Pre-computed optical flow (optional)
+            frame_count: Current frame number
+        
+        Returns:
+            tuple: (all_detections, vehicle_detections_only)
+        """
         detections = []
-        if self.prev_frame is None:
-            self.prev_frame = frame.copy()
-
-        # Vehicle detection
-        vehicle_results = self.vehicle_model(frame, conf=0.3, verbose=False)
-        for result in vehicle_results:
-            for box in result.boxes:
-                bbox = box.xyxy[0].cpu().numpy()
-                class_id = int(box.cls[0].cpu().numpy())
-                conf = box.conf[0].cpu().numpy()
-                if class_id in [2, 3, 4, 6, 8]:  # bicycle, car, motorcycle, bus, truck
-                    center = ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
-                    velocity = self._estimate_velocity(bbox, frame)
-                    detections.append({
-                        'bbox': bbox,
-                        'class_id': class_id,
-                        'type': 'vehicle',
-                        'center': center,
-                        'velocity': velocity,
-                        'confidence': conf
-                    })
-
-        # Trash and bin detection
-        trash_results = self.trash_model(frame, conf=0.2, verbose=False)
-        for result in trash_results:
-            for box in result.boxes:
-                bbox = box.xyxy[0].cpu().numpy()
-                class_id = int(box.cls[0].cpu().numpy())
-                conf = box.conf[0].cpu().numpy()
-                center = ((bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2)
-                if class_id in [0, 1, 2]:  # trash classes: Plastic, Pile, Face mask
-                    status = 'potential'
-                    bbox_key = tuple(bbox.round().astype(int))  # Unique identifier for trash
-                    self.trash_sightings[bbox_key] += 1
-                    if self.trash_sightings[bbox_key] >= self.trash_confirmation_threshold:
-                        status = 'confirmed'
-                    detections.append({
-                        'bbox': bbox,
-                        'class_id': class_id,
-                        'type': 'trash',
-                        'center': center,
-                        'confidence': conf,
-                        'status': status
-                    })
-                elif class_id == 3:  # bin: Trash bin
-                    detections.append({
-                        'bbox': bbox,
-                        'class_id': class_id,
-                        'type': 'bin',
-                        'center': center,
-                        'confidence': conf
-                    })
-
-        # Contextual analysis for trash
-        bin_centers = [d['center'] for d in detections if d['type'] == 'bin']
-        for d in detections:
-            if d['type'] == 'trash':
-                if not bin_centers:
-                    d['context'] = 'improper'
+        vehicle_detections = []
+        
+        # === STEP 1: RUN YOLO MODELS ===
+        vehicle_results = self.vehicle_model(frame, conf=0.3, classes=[2, 3, 4, 6, 8], imgsz=640, device=self.device)
+        trash_results = self.trash_model(frame, conf=0.2, classes=[0, 1, 2], imgsz=640, device=self.device)
+        bin_results = self.trash_model(frame, conf=0.3, classes=[3], imgsz=640, device=self.device)
+        
+        # === STEP 2: PROCESS VEHICLE DETECTIONS (needed first for validation) ===
+        for r in vehicle_results:
+            boxes = r.boxes
+            for box in boxes:
+                bbox = box.xyxy[0].cpu().numpy().astype(int).tolist()
+                x1, y1, x2, y2 = bbox
+                center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                
+                vehicle_det = {
+                    'bbox': bbox,
+                    'center': center,
+                    'confidence': float(box.conf[0]),
+                    'class': int(box.cls[0]),
+                    'type': 'vehicle',
+                    'id': None  # Will be assigned by tracker
+                }
+                
+                vehicle_detections.append(vehicle_det)
+                detections.append(vehicle_det)
+        
+        # === STEP 3: PROCESS TRASH DETECTIONS WITH INITIAL VALIDATION ===
+        initial_trash_count = 0
+        passed_physical = 0
+        passed_overlap = 0
+        
+        for r in trash_results:
+            boxes = r.boxes
+            for box in boxes:
+                initial_trash_count += 1
+                bbox = box.xyxy[0].cpu().numpy().astype(int).tolist()
+                x1, y1, x2, y2 = bbox
+                center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                
+                trash_det = {
+                    'bbox': bbox,
+                    'center': center,
+                    'confidence': float(box.conf[0]),
+                    'class': int(box.cls[0]),
+                    'type': 'trash',
+                    'id': None,  # Will be assigned by tracker
+                    'status': 'potential'  # Will be updated by validator
+                }
+                
+                # LAYER 1: Physical constraints check
+                is_valid, reason = self.validator._check_physical_constraints(
+                    trash_det['bbox'], trash_det
+                )
+                
+                if not is_valid:
+                    print(f"[FILTER-PHYSICAL] Frame {frame_count}: {reason}")
+                    continue
+                
+                passed_physical += 1
+                
+                # LAYER 2: Vehicle overlap check
+                is_valid, reason = self.validator._check_vehicle_overlap(
+                    trash_det['bbox'], vehicle_detections
+                )
+                
+                if not is_valid:
+                    print(f"[FILTER-OVERLAP] Frame {frame_count}: {reason}")
+                    continue
+                
+                passed_overlap += 1
+                
+                # Passed initial validation - add to detections
+                detections.append(trash_det)
+        
+        # Log filtering stats
+        if initial_trash_count > 0:
+            print(f"[FILTER-STATS] Frame {frame_count}: "
+                  f"{initial_trash_count} raw trash detections -> "
+                  f"{passed_physical} passed physical -> "
+                  f"{passed_overlap} passed overlap -> "
+                  f"{passed_overlap} sent to tracking")
+        
+        # === STEP 4: PROCESS BIN DETECTIONS ===
+        for r in bin_results:
+            boxes = r.boxes
+            for box in boxes:
+                bbox = box.xyxy[0].cpu().numpy().astype(int).tolist()
+                x1, y1, x2, y2 = bbox
+                center = ((x1 + x2) / 2, (y1 + y2) / 2)
+                
+                detections.append({
+                    'bbox': bbox,
+                    'center': center,
+                    'confidence': float(box.conf[0]),
+                    'class': int(box.cls[0]),
+                    'type': 'bin'
+                })
+        
+        # === STEP 5: COMPUTE VELOCITIES (if flow available) ===
+        if flow is not None:
+            for det in detections:
+                if det['type'] == 'vehicle':
+                    bbox = det['bbox']
+                    x1, y1, x2, y2 = bbox
+                    
+                    # Extract flow in bbox region
+                    flow_region = flow[y1:y2, x1:x2]
+                    if flow_region.size > 0:
+                        # Calculate mean flow magnitude
+                        magnitude = np.sqrt(flow_region[..., 0]**2 + flow_region[..., 1]**2)
+                        det['velocity'] = float(np.mean(magnitude))
+                    else:
+                        det['velocity'] = 0.0
                 else:
-                    min_dist = min([self._calc_distance(d['center'], bc) for bc in bin_centers])
-                    d['context'] = 'proper' if min_dist < 50 else 'improper'
-
-        self.prev_frame = frame.copy()
-        return detections
+                    det['velocity'] = 0.0
+        
+        return detections, vehicle_detections
 
     def _estimate_velocity(self, bbox, frame):
         """Estimate object velocity using optical flow."""

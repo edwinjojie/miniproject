@@ -51,17 +51,94 @@ def process_video(video_path, sid, camera_id):
         ret, frame = cap.read()
         if not ret:
             break
+        h, w = frame.shape[:2]
+        target_w = 960
+        if w > target_w:
+            new_h = int(h * target_w / w)
+            frame = cv2.resize(frame, (target_w, new_h))
         if frame_count % 2 == 0:
-            detections = detector.detect(frame)
-            tracking_data = tracker.assign_ids(detections)
-            flow, mag = detector.compute_optical_flow(frame)
+            if frame_count % 4 == 0:
+                flow, mag = detector.compute_optical_flow(frame)
+            else:
+                flow, mag = (None, None)
             depth_map = None
             if depth_visualizer and vis_manager.current_mode == 'depth':
                 try:
                     depth_map = depth_visualizer.visualize_depth(frame)
                 except Exception:
                     depth_map = None
-            events = event_detector.process(tracking_data, detections, frame, frame_count, flow, depth_map)
+
+            # === DETECTION WITH INITIAL VALIDATION ===
+            detections, vehicle_detections = detector.detect(
+                frame, 
+                detector.prev_frame, 
+                flow,
+                frame_count
+            )
+            
+            # === TRACKING (assigns IDs) ===
+            tracking_data = tracker.assign_ids(detections)
+            
+            # === FULL VALIDATION WITH TEMPORAL ANALYSIS ===
+            validated_detections = []
+            rejected_count = 0
+            suspicious_count = 0
+            confirmed_count = 0
+            
+            for det in detections:
+                # Non-trash detections pass through without validation
+                if det['type'] != 'trash':
+                    validated_detections.append(det)
+                    continue
+                
+                # Full validation for trash detections
+                is_valid, state, reason = detector.validator.validate_detection(
+                    det,
+                    vehicle_detections,
+                    frame_count,
+                    flow,
+                    depth_map if 'depth_map' in locals() else None
+                )
+                
+                # Add validation state to detection
+                det['validation_state'] = state
+                
+                if is_valid and state == 'CONFIRMED':
+                    det['status'] = 'confirmed'
+                    validated_detections.append(det)
+                    confirmed_count += 1
+                    print(f"[CONFIRMED] Frame {frame_count} Track {det['id']}: {reason}")
+                elif state == 'SUSPICIOUS':
+                    det['status'] = 'suspicious'
+                    # Keep tracking but don't confirm yet
+                    suspicious_count += 1
+                elif state == 'POTENTIAL':
+                    det['status'] = 'potential'
+                    # Still building evidence
+                else:  # REJECTED
+                    rejected_count += 1
+                    print(f"[REJECTED] Frame {frame_count} Track {det.get('id', 'unknown')}: {reason}")
+            
+            # Log validation summary
+            print(f"[VALIDATION-SUMMARY] Frame {frame_count}: "
+                  f"{confirmed_count} confirmed, "
+                  f"{suspicious_count} suspicious, "
+                  f"{rejected_count} rejected")
+            
+            # === EVENT DETECTION (only on validated detections) ===
+            events = event_detector.process(
+                tracking_data,
+                validated_detections,  # Use validated instead of raw detections
+                frame,
+                frame_count,
+                flow,
+                depth_map if 'depth_map' in locals() else None
+            )
+            
+            # === CLEANUP OLD TRACKS (every 30 frames) ===
+            if frame_count % 30 == 0:
+                active_ids = [tid for tid, t in tracking_data.items() if t.get('type') == 'trash']
+                detector.validator.cleanup_old_tracks(active_ids)
             events_data[sid].extend(events)
 
             vis_frame = vis_manager.visualize(frame, detections, tracking_data, events, flow, depth_map)
