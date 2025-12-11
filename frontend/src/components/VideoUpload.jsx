@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Upload, FileText, RefreshCw } from 'lucide-react';
-import { mockUpload, mockExportExcel, mockExportReport, initializeWebSocket } from '../data';
+import { mockUpload, mockExportExcel, mockExportReport, setVisualizationMode, connectSocket } from '../data';
 
 export function VideoUpload() {
   const [file, setFile] = useState(null);
@@ -15,8 +15,22 @@ export function VideoUpload() {
   const canvasRef = useRef(null);
 
   useEffect(() => {
+    connectSocket();
     const handleNewEvent = (e) => setEvents(prev => [...prev, ...e.detail]);
-    const handleComplete = (e) => setResult(e.detail);
+    const handleComplete = (e) => {
+      setResult(e.detail);
+      setProcessing(false);
+      setProgress(100);
+      // Auto-download Excel when processing completes
+      mockExportExcel().then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'events.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+      }).catch(() => {});
+    };
     window.addEventListener('newEvent', handleNewEvent);
     window.addEventListener('processingComplete', handleComplete);
     return () => {
@@ -55,8 +69,6 @@ export function VideoUpload() {
     } catch (error) {
       setError(`Upload failed: ${error.message}`);
       clearInterval(interval);
-    } finally {
-      setProcessing(false);
     }
   };
 
@@ -112,6 +124,10 @@ export function VideoUpload() {
         >
           Select Video
         </button>
+        <div className="mt-4 flex items-center justify-center gap-3">
+          <button onClick={() => setVisualizationMode('normal')} className="border border-gray-300 px-3 py-2 rounded-md">Normal</button>
+          <button onClick={() => setVisualizationMode('depth')} className="border border-gray-300 px-3 py-2 rounded-md">Depth</button>
+        </div>
       </div>
 
       {processing && (

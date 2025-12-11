@@ -12,6 +12,11 @@ from tracking import Tracker
 from events import EventDetector
 from reporting import Reporter
 from visualization_manager import VisualizationManager
+try:
+    from depth_visualization import DepthVisualizer
+    depth_visualizer = DepthVisualizer()
+except Exception:
+    depth_visualizer = None
 
 app = Flask(__name__)
 CORS(app)
@@ -48,23 +53,35 @@ def process_video(video_path, sid, camera_id):
             break
         if frame_count % 2 == 0:
             detections = detector.detect(frame)
-            tracker.assign_ids(detections, frame_count)
+            tracking_data = tracker.assign_ids(detections)
             flow, mag = detector.compute_optical_flow(frame)
-            depth_map = vis_manager.depth_visualizer.visualize_depth(frame) if vis_manager.current_mode == 'depth' else None
-            events = event_detector.process(tracker.tracking_data, {d['id']: (d['bbox'], d.get('velocity', 0)) for d in detections if d['type'] == 'vehicle'}, 
-                                          [d for d in detections if d['type'] == 'trash'], frame, flow, depth_map)
+            depth_map = None
+            if depth_visualizer and vis_manager.current_mode == 'depth':
+                try:
+                    depth_map = depth_visualizer.visualize_depth(frame)
+                except Exception:
+                    depth_map = None
+            events = event_detector.process(tracking_data, detections, frame, frame_count, flow, depth_map)
             events_data[sid].extend(events)
 
-            vis_frame = vis_manager.visualize(frame, detections, tracker.tracking_data, events, flow)
+            vis_frame = vis_manager.visualize(frame, detections, tracking_data, events, flow, depth_map)
             _, buffer = cv2.imencode('.jpg', vis_frame)
             frame_data = base64.b64encode(buffer).decode('utf-8')
             # Use socketio.emit so background thread can emit to the client's room
-            socketio.emit('frame_update', {'image': frame_data, 'frame_count': frame_count, 'camera_id': camera_id}, to=sid)
+            payload = {'image': frame_data, 'frame_count': frame_count, 'camera_id': camera_id}
+            if sid:
+                socketio.emit('frame_update', payload, to=sid)
+            else:
+                socketio.emit('frame_update', payload, broadcast=True)
 
         frame_count += 1
     cap.release()
     report_path = reporter.export_events(events_data[sid], camera_id)
-    socketio.emit('processing_complete', {'report_path': report_path, 'events': events_data[sid]}, to=sid)
+    complete_payload = {'report_path': report_path, 'events': events_data[sid]}
+    if sid:
+        socketio.emit('processing_complete', complete_payload, to=sid)
+    else:
+        socketio.emit('processing_complete', complete_payload, broadcast=True)
 
 @app.route('/api/upload', methods=['POST'])
 def upload_video():
@@ -95,6 +112,53 @@ def upload_video():
 @app.route('/api/download/<path:report_path>', methods=['GET'])
 def download_report(report_path):
     return send_file(report_path, as_attachment=True)
+
+@app.route('/api/events', methods=['GET'])
+def get_events():
+    all_events = []
+    for sid_key, evts in events_data.items():
+        for idx, e in enumerate(evts):
+            all_events.append({
+                'id': idx + 1,
+                'timestamp': e['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(e['timestamp'], 'strftime') else str(e['timestamp']),
+                'source': 'Camera1',
+                'type': e.get('event_type'),
+                'description': 'Trash disposal event',
+                'position': e.get('location', [0,0,0])
+            })
+    return jsonify(all_events)
+
+@app.route('/api/export/excel', methods=['GET'])
+def export_excel():
+    ids_param = request.args.get('ids')
+    ids = [int(x) for x in ids_param.split(',')] if ids_param else None
+    rows = [['Event ID','Timestamp','Source','Type','Description','X','Y','Z']]
+    events = []
+    for sid_key, evts in events_data.items():
+        for idx, e in enumerate(evts):
+            events.append((idx + 1, e))
+    if ids:
+        events = [pair for pair in events if pair[0] in ids]
+    for eid, e in events:
+        pos = e.get('location', [0,0,0])
+        ts = e['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(e['timestamp'], 'strftime') else str(e['timestamp'])
+        rows.append([eid, ts, 'Camera1', e.get('event_type'), 'Trash disposal event', pos[0], pos[1], pos[2]])
+    csv_data = '\n'.join([','.join(map(str, r)) for r in rows]).encode('utf-8')
+    return send_file(io.BytesIO(csv_data), mimetype='text/csv', as_attachment=True, download_name='events.csv')
+
+@app.route('/api/export/report/<int:event_id>', methods=['GET'])
+def export_report(event_id):
+    events = []
+    for sid_key, evts in events_data.items():
+        for idx, e in enumerate(evts):
+            events.append((idx + 1, e))
+    match = next((e for eid, e in events if eid == event_id), None)
+    if not match:
+        return jsonify({'error': 'Event not found'}), 404
+    pos = match.get('location', [0,0,0])
+    ts = match['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(match['timestamp'], 'strftime') else str(match['timestamp'])
+    content = f"Event Report\nID: {event_id}\nTimestamp: {ts}\nSource: Camera1\nType: {match.get('event_type')}\nDescription: Trash disposal event\nPosition: {pos}"
+    return send_file(io.BytesIO(content.encode('utf-8')), mimetype='text/plain', as_attachment=True, download_name=f'Event_{event_id}_Report.txt')
 
 if __name__ == "__main__":
     os.makedirs(os.path.join(BASE_PATH, UPLOAD_FOLDER), exist_ok=True)

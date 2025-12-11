@@ -1,41 +1,57 @@
+import { io } from 'socket.io-client'
 const API_BASE_URL = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ? import.meta.env.VITE_API_URL : 'http://localhost:5000';
 let socket;
+let sid;
 
-export const initializeWebSocket = (sid) => {
-  const wsProto = API_BASE_URL.startsWith('https') ? 'wss' : 'ws';
-  const wsUrl = API_BASE_URL.replace(/^https?/, wsProto);
-  socket = new WebSocket(`${wsUrl}/socket.io/?EIO=4&transport=websocket&sid=${sid}`);
-  socket.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.frame_update) {
-      document.getElementById('live-canvas').src = `data:image/jpeg;base64,${data.frame_update.image}`;
-    } else if (data.event_update) {
-      window.dispatchEvent(new CustomEvent('newEvent', { detail: data.event_update.events }));
-    } else if (data.processing_complete) {
-      window.dispatchEvent(new CustomEvent('processingComplete', { detail: data.processing_complete }));
-    }
-  };
-  socket.onerror = (error) => console.error('WebSocket error:', error);
-  socket.onclose = () => console.log('WebSocket closed');
+export const connectSocket = () => {
+  return new Promise(resolve => {
+    socket = io(API_BASE_URL);
+    socket.on('connect', () => {
+      sid = socket.id;
+      resolve(sid);
+    });
+    socket.on('frame_update', (data) => {
+      const el = document.getElementById('live-canvas');
+      if (el) el.src = `data:image/jpeg;base64,${data.image}`;
+    });
+    socket.on('processing_complete', (data) => {
+      window.dispatchEvent(new CustomEvent('processingComplete', { detail: { eventsDetected: (data.events || []).length, ...data } }));
+      if (Array.isArray(data.events) && data.events.length) {
+        window.dispatchEvent(new CustomEvent('newEvent', { detail: data.events }));
+      }
+    });
+  });
+};
+
+export const setVisualizationMode = (mode) => {
+  const ready = socket && socket.connected ? Promise.resolve(sid) : connectSocket();
+  ready.then(() => {
+    socket.emit('set_visualization_mode', { mode });
+  });
+};
+
+export const ensureSocket = () => {
+  return socket && socket.connected ? Promise.resolve(sid) : connectSocket();
 };
 
 export const mockUpload = (file) => {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
     formData.append('file', file);
-    fetch(`${API_BASE_URL}/api/upload`, {
+    const ensureSocket = socket && socket.connected ? Promise.resolve(sid) : connectSocket();
+    ensureSocket.then(() => {
+      if (sid) formData.append('sid', sid);
+      fetch(`${API_BASE_URL}/api/upload`, {
       method: 'POST',
       body: formData,
-    })
+      })
       .then(response => {
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         return response.json();
       })
-      .then(data => {
-        initializeWebSocket(data.sid); // Start WebSocket with session ID
-        resolve(data);
-      })
+      .then(data => resolve(data))
       .catch(error => reject(error));
+    });
   });
 };
 
