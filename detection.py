@@ -89,9 +89,16 @@ class Detector:
         """Estimate object velocity using optical flow."""
         if self.prev_frame is None:
             return 0.0
+        # Guard against shape mismatch between previous and current frame
+        if self.prev_frame.shape != frame.shape:
+            self.prev_frame = frame.copy()
+            return 0.0
         prev_gray = cv2.cvtColor(self.prev_frame, cv2.COLOR_BGR2GRAY)
         curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        try:
+            flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        except cv2.error:
+            return 0.0
         x1, y1, x2, y2 = map(int, bbox)
         flow_region = flow[y1:y2, x1:x2]
         mag, _ = cv2.cartToPolar(flow_region[..., 0], flow_region[..., 1])
@@ -102,9 +109,17 @@ class Detector:
         if self.prev_frame is None:
             self.prev_frame = frame.copy()
             return None, None
+        # Guard against shape mismatch
+        if self.prev_frame.shape != frame.shape:
+            self.prev_frame = frame.copy()
+            return None, None
         prev_gray = cv2.cvtColor(cv2.GaussianBlur(self.prev_frame, (5, 5), 0), cv2.COLOR_BGR2GRAY)
         curr_gray = cv2.cvtColor(cv2.GaussianBlur(frame, (5, 5), 0), cv2.COLOR_BGR2GRAY)
-        flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        try:
+            flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        except cv2.error:
+            self.prev_frame = frame.copy()
+            return None, None
         mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
         mag = cv2.medianBlur(mag, 3)
         self.prev_frame = frame.copy()

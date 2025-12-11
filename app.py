@@ -77,7 +77,25 @@ def process_video(video_path, sid, camera_id):
         frame_count += 1
     cap.release()
     report_path = reporter.export_events(events_data[sid], camera_id)
-    complete_payload = {'report_path': report_path, 'events': events_data[sid]}
+    def _jsonify_event(e):
+        pos = e.get('location', [0, 0])
+        if isinstance(pos, tuple):
+            pos = list(pos)
+        x = pos[0] if len(pos) > 0 else 0
+        y = pos[1] if len(pos) > 1 else 0
+        z = pos[2] if len(pos) > 2 else 0
+        ts = e['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(e['timestamp'], 'strftime') else str(e['timestamp'])
+        return {
+            'timestamp': ts,
+            'vehicle_id': e.get('vehicle_id'),
+            'event_type': e.get('event_type'),
+            'location': [x, y, z],
+            'velocity': e.get('velocity'),
+            'review_needed': e.get('review_needed', False),
+            'frame_count': e.get('frame_count')
+        }
+    safe_events = [_jsonify_event(e) for e in events_data[sid]]
+    complete_payload = {'report_path': report_path, 'events': safe_events}
     if sid:
         socketio.emit('processing_complete', complete_payload, to=sid)
     else:
@@ -118,13 +136,19 @@ def get_events():
     all_events = []
     for sid_key, evts in events_data.items():
         for idx, e in enumerate(evts):
+            pos = e.get('location', [0, 0])
+            if isinstance(pos, tuple):
+                pos = list(pos)
+            x = pos[0] if len(pos) > 0 else 0
+            y = pos[1] if len(pos) > 1 else 0
+            z = pos[2] if len(pos) > 2 else 0
             all_events.append({
                 'id': idx + 1,
                 'timestamp': e['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(e['timestamp'], 'strftime') else str(e['timestamp']),
                 'source': 'Camera1',
                 'type': e.get('event_type'),
                 'description': 'Trash disposal event',
-                'position': e.get('location', [0,0,0])
+                'position': [x, y, z]
             })
     return jsonify(all_events)
 
@@ -140,9 +164,14 @@ def export_excel():
     if ids:
         events = [pair for pair in events if pair[0] in ids]
     for eid, e in events:
-        pos = e.get('location', [0,0,0])
+        pos = e.get('location', [0, 0])
+        if isinstance(pos, tuple):
+            pos = list(pos)
+        x = pos[0] if len(pos) > 0 else 0
+        y = pos[1] if len(pos) > 1 else 0
+        z = pos[2] if len(pos) > 2 else 0
         ts = e['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(e['timestamp'], 'strftime') else str(e['timestamp'])
-        rows.append([eid, ts, 'Camera1', e.get('event_type'), 'Trash disposal event', pos[0], pos[1], pos[2]])
+        rows.append([eid, ts, 'Camera1', e.get('event_type'), 'Trash disposal event', x, y, z])
     csv_data = '\n'.join([','.join(map(str, r)) for r in rows]).encode('utf-8')
     return send_file(io.BytesIO(csv_data), mimetype='text/csv', as_attachment=True, download_name='events.csv')
 
